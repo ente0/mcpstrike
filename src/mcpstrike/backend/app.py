@@ -181,12 +181,12 @@ Examples:
         """,
     )
     parser.add_argument(
-        "--host", default=os.getenv("HEXSTRIKE_BACKEND_HOST", "0.0.0.0"),
+        "--host", default=os.getenv("MCPSTRIKE_BACKEND_HOST", "0.0.0.0"),
         help="Bind address (default: 0.0.0.0)",
     )
     parser.add_argument(
-        "--port", type=int, default=int(os.getenv("HEXSTRIKE_BACKEND_PORT", "8888")),
-        help="Bind port (default: 8888)",
+        "--port", type=int, default=int(os.getenv("MCPSTRIKE_BACKEND_PORT", "8890")),
+        help="Bind port (default: 8890)",
     )
     args = parser.parse_args()
 
@@ -195,9 +195,10 @@ Examples:
     print("=" * 60)
     print("  mcpstrike-backend v3.0.0 (standalone mode)")
     print("=" * 60)
-    print(f"  Listening on http://{args.host}:{args.port}")
+    print(f"  Listening on  http://{args.host}:{args.port}")
     print(f"  Health:  GET  http://{args.host}:{args.port}/health")
     print(f"  Execute: POST http://{args.host}:{args.port}/api/command")
+    print(f"  Note: hexstrike_server uses port 8888 — no conflict")
     print("=" * 60)
 
     uvicorn.run(app, host=args.host, port=args.port, log_level="info")

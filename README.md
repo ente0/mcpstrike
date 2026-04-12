@@ -7,22 +7,24 @@ mcpstrike connects an LLM (via Ollama) to security tools through the Model Conte
 ## Architecture
 
 ```
-mcpstrike-client          mcpstrike-server (MCP)         hexstrike-server
- (TUI + Ollama)   --->    (FastMCP, port 8889)    --->   (default backend, port 8888)
-      |                         |
-      v                         |--- OR --->  mcpstrike-backend (optional, port 8888)
+mcpstrike-client          mcpstrike-server (MCP)         hexstrike_server
+ (TUI + Ollama)   --->    (FastMCP, port 8889)    --->   (port 8888, must be running)
+      |
+      v
   Ollama LLM
-  (llama3.2, etc.)
+  (llama3.2, qwen3.5, etc.)
+
+  Optional: mcpstrike-backend can replace hexstrike_server for local testing
 ```
 
-**Three-tier design:**
+**Components:**
 
 | Component | Role | Default port |
 |---|---|---|
-| **hexstrike-server** (default) | External backend that runs security tools | 8888 |
-| `mcpstrike-backend` (optional) | Lightweight local alternative to hexstrike | 8888 |
-| `mcpstrike-server` | MCP server exposing 14 tools for session/command management | 8889 |
+| **hexstrike_server** | External backend — must be started separately | 8888 |
+| `mcpstrike-server` | MCP server exposing 15 tools for session/command management | 8889 |
 | `mcpstrike-client` | Interactive TUI that drives an Ollama LLM to call MCP tools | — |
+| `mcpstrike-backend` *(optional)* | Lightweight local alternative to hexstrike_server | **8890** |
 
 ## Installation
 
@@ -53,32 +55,40 @@ pip install -e ".[dev,backend]"
 
 ## Quick Start
 
-### With hexstrike-server (default)
+**hexstrike_server must already be running** on port 8888 before starting mcpstrike.
 
-Start hexstrike-server separately, then:
+### Automated (recommended)
 
 ```bash
-# Terminal 1: MCP server
-mcpstrike-server
-
-# Terminal 2: Client
-mcpstrike-client
+./start.sh
 ```
 
-### With standalone backend (no hexstrike needed)
+`start.sh` is git-ignored and contains your personal IPs/model names. It opens separate xterm windows (or falls back to background processes) for `mcpstrike-server` and `mcpstrike-client`.
+
+### Manual
 
 ```bash
-# Terminal 1: Local backend (runs security tools as subprocesses)
+# Terminal 1: MCP server (points to hexstrike_server on 8888)
+HEXSTRIKE_BACKEND_URL=http://localhost:8888 mcpstrike-server
+
+# Terminal 2: Client
+mcpstrike-client --ollama-url http://<ollama-host>:11434 --model qwen3.5
+```
+
+### With standalone backend (no hexstrike_server needed)
+
+```bash
+# Terminal 1: Local backend (port 8890, no conflict with hexstrike on 8888)
 mcpstrike-backend
 
-# Terminal 2: MCP server
-mcpstrike-server
+# Terminal 2: MCP server pointing to mcpstrike-backend
+HEXSTRIKE_BACKEND_URL=http://localhost:8890 mcpstrike-server
 
 # Terminal 3: Client
 mcpstrike-client
 ```
 
-The client connects to the MCP server, which forwards `execute_command` calls to the backend (hexstrike or mcpstrike-backend).
+Requires `pipx install ".[backend]"`.
 
 ## Commands
 
@@ -332,7 +342,7 @@ src/mcpstrike/
 
 - Python >= 3.10
 - Ollama running locally (or remotely via `--ollama-url`)
-- **hexstrike-server** running on port 8888 (default), OR install with `.[backend]` for the standalone alternative
+- **hexstrike_server** running on port 8888, OR install with `.[backend]` for the standalone alternative
 - Security tools installed on the backend machine (nmap, nikto, sqlmap, etc.)
 
 ## License
