@@ -1,14 +1,13 @@
-"""HexStrike-compatible FastAPI backend.
+"""Optional standalone backend — lightweight alternative to HexStrike.
 
-Provides the HTTP endpoints that :func:`mcpstrike.server.app.execute_command`
-and :func:`mcpstrike.server.app.health_check` call:
+Provides the same HTTP API that the MCP server's ``execute_command`` and
+``health_check`` tools expect:
 
-    GET  /health          → {"status": "ok", ...}
-    POST /api/command     → run a subprocess and return stdout/stderr/exit_code
+    GET  /health          -> {"status": "ok", ...}
+    POST /api/command     -> run a subprocess and return stdout/stderr/exit_code
 
-This is the missing piece that closes the end-to-end loop:
-
-    mcpstrike-client  →  mcpstrike-server (MCP)  →  mcpstrike-backend (subprocess)
+Use this when you don't have a full HexStrike server running and want to
+execute security tools locally.
 
 Usage::
 
@@ -16,10 +15,9 @@ Usage::
     mcpstrike-backend --port 9999
     mcpstrike-backend --host 127.0.0.1
 
-Environment::
+Requires the ``backend`` extra::
 
-    HEXSTRIKE_BACKEND_HOST  (default 0.0.0.0)
-    HEXSTRIKE_BACKEND_PORT  (default 8888)
+    pipx install ".[backend]"
 """
 
 from __future__ import annotations
@@ -39,7 +37,7 @@ from pydantic import BaseModel, Field
 app = FastAPI(
     title="mcpstrike backend",
     version="3.0.0",
-    description="Local subprocess execution backend for mcpstrike",
+    description="Optional local subprocess execution backend for mcpstrike",
 )
 
 app.add_middleware(
@@ -88,16 +86,6 @@ async def health_check() -> dict[str, Any]:
 # ── Command execution ─────────────────────────────────────────────────────
 
 
-def _resolve_binary(cmd_parts: list[str]) -> list[str]:
-    """Resolve the binary to its full path if possible."""
-    if not cmd_parts:
-        return cmd_parts
-    binary = shutil.which(cmd_parts[0])
-    if binary:
-        cmd_parts[0] = binary
-    return cmd_parts
-
-
 @app.post("/api/command")
 async def execute_command(req: CommandRequest) -> CommandResponse:
     """Execute a shell command as a subprocess and return its output."""
@@ -123,8 +111,6 @@ async def execute_command(req: CommandRequest) -> CommandResponse:
                 status="timeout",
                 command=req.command,
                 output=f"Command timed out after {req.timeout}s",
-                stdout="",
-                stderr="",
                 exit_code=-1,
                 duration=round(duration, 2),
                 timestamp=timestamp,
@@ -166,18 +152,24 @@ def main() -> None:
     parser = argparse.ArgumentParser(
         prog="mcpstrike-backend",
         description=(
-            "mcpstrike backend — local subprocess execution server.\n\n"
-            "Listens for command execution requests from the mcpstrike MCP server\n"
-            "and runs them as subprocesses, returning stdout/stderr/exit_code.\n"
-            "This is the component that actually runs nmap, nikto, sqlmap, etc."
+            "mcpstrike backend — optional local subprocess execution server.\n\n"
+            "Lightweight alternative to HexStrike for running security tools\n"
+            "locally. Listens for command execution requests from the MCP server\n"
+            "and runs them as subprocesses."
         ),
         formatter_class=argparse.RawDescriptionHelpFormatter,
         epilog="""
+This is OPTIONAL. By default mcpstrike uses an external HexStrike server
+as the backend. Use this only when you want to run tools locally without
+a full HexStrike deployment.
+
 Architecture:
   mcpstrike-client  -->  mcpstrike-server (MCP, port 8889)
                               |
                               v
-                         mcpstrike-backend (this, port 8888)
+                    hexstrike-server (default, port 8888)
+                         — OR —
+                    mcpstrike-backend (this, port 8888)
                               |
                               v
                          subprocess (nmap, nikto, ...)
@@ -201,7 +193,7 @@ Examples:
     import uvicorn
 
     print("=" * 60)
-    print("  mcpstrike-backend v3.0.0")
+    print("  mcpstrike-backend v3.0.0 (standalone mode)")
     print("=" * 60)
     print(f"  Listening on http://{args.host}:{args.port}")
     print(f"  Health:  GET  http://{args.host}:{args.port}/health")

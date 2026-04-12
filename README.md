@@ -7,21 +7,20 @@ mcpstrike connects an LLM (via Ollama) to security tools through the Model Conte
 ## Architecture
 
 ```
-mcpstrike-client          mcpstrike-server (MCP)         mcpstrike-backend
- (TUI + Ollama)   --->    (FastMCP, port 8889)    --->   (FastAPI, port 8888)
-      |                         |                              |
-      v                         v                              v
-  Ollama LLM              MCP tools (14)               subprocess execution
-  (llama3.2, etc.)        session management            (nmap, nikto, sqlmap...)
-                          output parsing
-                          findings persistence
+mcpstrike-client          mcpstrike-server (MCP)         hexstrike-server
+ (TUI + Ollama)   --->    (FastMCP, port 8889)    --->   (default backend, port 8888)
+      |                         |
+      v                         |--- OR --->  mcpstrike-backend (optional, port 8888)
+  Ollama LLM
+  (llama3.2, etc.)
 ```
 
 **Three-tier design:**
 
 | Component | Role | Default port |
 |---|---|---|
-| `mcpstrike-backend` | Runs security tools as subprocesses, returns stdout/stderr | 8888 |
+| **hexstrike-server** (default) | External backend that runs security tools | 8888 |
+| `mcpstrike-backend` (optional) | Lightweight local alternative to hexstrike | 8888 |
 | `mcpstrike-server` | MCP server exposing 14 tools for session/command management | 8889 |
 | `mcpstrike-client` | Interactive TUI that drives an Ollama LLM to call MCP tools | — |
 
@@ -30,39 +29,56 @@ mcpstrike-client          mcpstrike-server (MCP)         mcpstrike-backend
 ### With pipx (recommended)
 
 ```bash
+# Standard install (uses hexstrike-server as backend)
 pipx install .
-```
 
-This installs four commands globally: `mcpstrike-server`, `mcpstrike-client`, `mcpstrike-backend`, and `mcpstrike-prompt`.
+# With optional standalone backend
+pipx install ".[backend]"
+```
 
 ### With pip
 
 ```bash
 pip install --user .
+
+# With optional standalone backend
+pip install --user ".[backend]"
 ```
 
 ### Development
 
 ```bash
-pip install -e ".[dev]"
+pip install -e ".[dev,backend]"
 ```
 
 ## Quick Start
 
-Start all three components (in separate terminals):
+### With hexstrike-server (default)
+
+Start hexstrike-server separately, then:
 
 ```bash
-# Terminal 1: Backend (executes actual security tools)
-mcpstrike-backend
-
-# Terminal 2: MCP server (provides tools to the LLM)
+# Terminal 1: MCP server
 mcpstrike-server
 
-# Terminal 3: Client (interactive TUI)
+# Terminal 2: Client
 mcpstrike-client
 ```
 
-The client connects to the MCP server, which forwards `execute_command` calls to the backend.
+### With standalone backend (no hexstrike needed)
+
+```bash
+# Terminal 1: Local backend (runs security tools as subprocesses)
+mcpstrike-backend
+
+# Terminal 2: MCP server
+mcpstrike-server
+
+# Terminal 3: Client
+mcpstrike-client
+```
+
+The client connects to the MCP server, which forwards `execute_command` calls to the backend (hexstrike or mcpstrike-backend).
 
 ## Commands
 
@@ -131,15 +147,17 @@ Environment variables:
 
 | Variable | Default | Description |
 |---|---|---|
-| `HEXSTRIKE_BACKEND_URL` | `http://localhost:8888` | Backend API URL |
+| `HEXSTRIKE_BACKEND_URL` | `http://localhost:8888` | Backend API URL (hexstrike or mcpstrike-backend) |
 | `MCPSTRIKE_HOST` | `0.0.0.0` | Server bind address |
 | `MCPSTRIKE_PORT` | `8889` | Server bind port |
 | `HEXSTRIKE_SESSION_PATH` | — | Absolute path for sessions (highest priority) |
 | `HEXSTRIKE_SESSION_DIR` | — | Folder name in `$HOME` for sessions |
 
-### mcpstrike-backend
+### mcpstrike-backend (optional)
 
-FastAPI backend that executes security tools as subprocesses.
+Lightweight local backend — alternative to hexstrike-server. Executes security tools as subprocesses directly on the local machine.
+
+**Requires the `backend` extra:** `pipx install ".[backend]"`
 
 ```
 mcpstrike-backend [OPTIONS]
@@ -243,7 +261,7 @@ Two templates ship with mcpstrike:
 Full-autonomy prompt with decision framework. The model receives:
 - Target information and scope boundaries
 - Complete tool arsenal reference
-- Decision framework (discovery → enumeration → exploitation → documentation)
+- Decision framework (discovery -> enumeration -> exploitation -> documentation)
 - Tool usage best practices and anti-patterns
 - XSS/SQLi workflow examples
 
@@ -268,7 +286,7 @@ Add `.txt` or `.md` files to `src/mcpstrike/client/prompts/templates/`. Use `{{P
 All configuration is via environment variables or `.env` file:
 
 ```env
-# Backend
+# Backend (hexstrike-server or mcpstrike-backend)
 HEXSTRIKE_BACKEND_URL=http://localhost:8888
 
 # MCP Server
@@ -290,7 +308,7 @@ HEXSTRIKE_SESSION_DIR=my_sessions  # relative to $HOME
 ```
 src/mcpstrike/
   config.py                     # Centralized settings (pydantic-settings)
-  backend/
+  backend/                      # OPTIONAL — standalone local backend
     app.py                      # FastAPI subprocess execution server
   server/
     wrapper.py                  # MCPServerWrapper (FastMCP lifecycle)
@@ -314,7 +332,8 @@ src/mcpstrike/
 
 - Python >= 3.10
 - Ollama running locally (or remotely via `--ollama-url`)
-- Security tools installed on the machine running `mcpstrike-backend` (nmap, nikto, etc.)
+- **hexstrike-server** running on port 8888 (default), OR install with `.[backend]` for the standalone alternative
+- Security tools installed on the backend machine (nmap, nikto, sqlmap, etc.)
 
 ## License
 

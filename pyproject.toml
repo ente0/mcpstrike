@@ -14,11 +14,13 @@ dependencies = [
     "pydantic-settings>=2.2",
     "rich>=13.7",
     "prompt_toolkit>=3.0.43",
-    "fastapi>=0.111",
-    "uvicorn[standard]>=0.29",
 ]
 
 [project.optional-dependencies]
+backend = [
+    "fastapi>=0.111",
+    "uvicorn[standard]>=0.29",
+]
 dev = [
     "ruff>=0.4",
     "mypy>=1.10",
@@ -29,8 +31,8 @@ dev = [
 [project.scripts]
 mcpstrike-server  = "mcpstrike.server.app:main"
 mcpstrike-client  = "mcpstrike.client.tui:main"
-mcpstrike-backend = "mcpstrike.backend.app:main"
 mcpstrike-prompt  = "mcpstrike.client.prompts.generator:main"
+mcpstrike-backend = "mcpstrike.backend.app:main"
 
 [build-system]
 requires = ["hatchling"]
