@@ -215,6 +215,38 @@ async def health_check() -> dict[str, Any]:
 
 
 @wrapper.tool()
+async def list_models(ollama_url: str | None = None) -> dict[str, Any]:
+    """List available Ollama models.
+
+    Queries the Ollama API and returns the installed models with their
+    sizes and modification dates. Useful to check which models are
+    available before switching with ``/model``.
+    """
+    url = ollama_url or settings.ollama_url
+    async with httpx.AsyncClient(timeout=10.0) as client:
+        try:
+            response = await client.get(f"{url}/api/tags")
+            response.raise_for_status()
+            data = response.json()
+            models = [
+                {
+                    "name": m.get("name"),
+                    "size_gb": round(m.get("size", 0) / 1e9, 1),
+                    "modified": m.get("modified_at", "")[:10],
+                }
+                for m in data.get("models", [])
+            ]
+            return {
+                "status": "ok",
+                "ollama_url": url,
+                "model_count": len(models),
+                "models": models,
+            }
+        except Exception as e:
+            return {"status": "failed", "ollama_url": url, "error": str(e)}
+
+
+@wrapper.tool()
 async def execute_command(
     command: str,
     args: list[str] | None = None,

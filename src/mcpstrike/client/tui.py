@@ -78,6 +78,7 @@ ICONS = {
 COMMANDS = {
     "/help": "Show this help panel",
     "/tools": "List available MCP tools",
+    "/models": "List available Ollama models",
     "/agent": "Toggle autonomous agent mode",
     "/prompt": "Generate and load a pentest prompt template",
     "/prompts": "List available prompt templates",
@@ -432,6 +433,8 @@ class TUIApp:
         elif head == "/clear":
             self.conversation.clear()
             self.ok("Conversation cleared")
+        elif head == "/models":
+            await self._list_ollama_models()
         elif head == "/prompts":
             self._list_prompts()
         elif head == "/prompt":
@@ -453,6 +456,42 @@ class TUIApp:
         for t in self.mcp.tools:
             table.add_row(t.name, (t.description or "")[:80])
         console.print(table)
+
+    async def _list_ollama_models(self) -> None:
+        """Fetch and display available Ollama models."""
+        try:
+            with console.status("[cyan]Querying Ollama for available models...", spinner="dots"):
+                async with httpx.AsyncClient(timeout=10.0) as client:
+                    resp = await client.get(f"{self.ollama_url}/api/tags")
+            resp.raise_for_status()
+            models = resp.json().get("models", [])
+        except Exception as e:
+            self.err(f"Cannot reach Ollama at {self.ollama_url}: {e}")
+            return
+
+        if not models:
+            self.warn("No models installed. Run: ollama pull <model>")
+            return
+
+        table = Table(
+            title=f"Ollama Models  ({self.ollama_url})",
+            box=ROUNDED,
+            border_style="cyan",
+        )
+        table.add_column("Name", style="bold cyan")
+        table.add_column("Size", style="dim", justify="right")
+        table.add_column("Modified", style="dim")
+        table.add_column("", style="green")
+
+        for m in sorted(models, key=lambda x: x.get("name", "")):
+            name = m.get("name", "?")
+            size_gb = round(m.get("size", 0) / 1e9, 1)
+            modified = (m.get("modified_at") or "")[:10]
+            active = "◀ active" if name == self.model else ""
+            table.add_row(name, f"{size_gb} GB", modified, active)
+
+        console.print(table)
+        console.print(f"[dim]Use /model <name> to switch. Current: [bold]{self.model}[/][/]")
 
     # ── Prompt template commands ───────────────────────────────────────
 
