@@ -63,7 +63,7 @@ pip install -e ".[dev,backend]"
 ./start.sh
 ```
 
-`start.sh` is git-ignored and contains your personal IPs/model names. It opens separate xterm windows (or falls back to background processes) for `mcpstrike-server` and `mcpstrike-client`.
+`start.sh` contains your personal IPs/model names. It opens separate xterm windows (or falls back to background processes) for `mcpstrike-server` and `mcpstrike-client`.
 
 ### Manual
 
