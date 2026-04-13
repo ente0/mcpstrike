@@ -344,7 +344,3 @@ src/mcpstrike/
 - Ollama running locally (or remotely via `--ollama-url`)
 - **hexstrike_server** running on port 8888, OR install with `.[backend]` for the standalone alternative
 - Security tools installed on the backend machine (nmap, nikto, sqlmap, etc.)
-
-## License
-
-MIT
