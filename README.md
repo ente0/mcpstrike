@@ -1,4 +1,4 @@
-<img width="1928" height="608" alt="Frame 1" src="https://github.com/user-attachments/assets/2407495e-315e-4019-b542-df3d5c47bc4e" />
+<img width="1928" height="608" alt="Frame 1" src="https://github.com/user-attachments/assets/4d82870f-7e5f-4a68-996f-9d5ea6c0244d" />
 
 # mcpstrike
 
