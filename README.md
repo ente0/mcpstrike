@@ -1,5 +1,11 @@
 <img width="1928" height="608" alt="Frame 1" src="https://github.com/user-attachments/assets/f9bca695-3bc7-4dca-927b-e77343120d03" />
 
+<p align="center">
+  <img src="https://img.shields.io/github/license/ente0/mcpstrike" alt="License">
+  <img src="https://img.shields.io/badge/python-3.8%2B-blue" alt="Python 3.8+">
+  <img src="https://img.shields.io/badge/ui-Textual-magenta" alt="Textual TUI">
+</p>
+
 # mcpstrike
 
 MCP server + Ollama-driven autonomous penetration testing framework.
