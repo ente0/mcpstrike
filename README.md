@@ -63,7 +63,7 @@ pip install -e ".[dev,backend]"
 ./start.sh
 ```
 
-`start.sh` is git-ignored and contains your personal IPs/model names. It opens separate xterm windows (or falls back to background processes) for `mcpstrike-server` and `mcpstrike-client`.
+`start.sh` contains your personal IPs/model names. It opens separate xterm windows (or falls back to background processes) for `mcpstrike-server` and `mcpstrike-client`.
 
 ### Manual
 
@@ -344,7 +344,3 @@ src/mcpstrike/
 - Ollama running locally (or remotely via `--ollama-url`)
 - **hexstrike_server** running on port 8888, OR install with `.[backend]` for the standalone alternative
 - Security tools installed on the backend machine (nmap, nikto, sqlmap, etc.)
-
-## License
-
-MIT

