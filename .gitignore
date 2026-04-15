@@ -41,7 +41,5 @@ pentest_*_template_*.txt
 logs/
 
 # Local startup scripts (contain personal IPs/models)
-start.sh
-start_*.sh
-run.sh
-run_*.sh
+my_start.sh
+my*.sh
