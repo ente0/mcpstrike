@@ -1,4 +1,5 @@
-<img width="1928" height="608" alt="mcpstrike-banner2" src="https://github.com/user-attachments/assets/a4cb5770-531d-4d0b-a598-2672ceef05ae" />
+<img width="1928" height="608" alt="Frame 1" src="https://github.com/user-attachments/assets/e4d9cc00-a152-4af6-b731-1e005bb8bc93" />
+
 # mcpstrike
 
 MCP server + Ollama-driven autonomous penetration testing framework.
