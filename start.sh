@@ -11,11 +11,7 @@ MCP_URL="http://localhost:${MCP_PORT}/mcp"
 HEXSTRIKE_URL="http://localhost:${HEXSTRIKE_PORT}"
 
 # Session directory — pass an optional first argument to override the default.
-# Examples:
-#   ./start.sh                          → ~/hexstrike_sessions
-#   ./start.sh /opt/pentest/sessions    → absolute path
-#   ./start.sh custom_dir               → ~/custom_dir
-if [[ -n "${1:-}" ]]; then
+if [[ -n "${1:-}" && "${1:-}" != "--tmux" ]]; then
     _sarg="${1/#\~/$HOME}"
     [[ "$_sarg" != /* ]] && _sarg="$HOME/$_sarg"
     SESSIONS_DIR="$_sarg"
@@ -29,94 +25,82 @@ echo "============================================================"
 echo "  mcpstrike stack"
 echo "============================================================"
 
-# ── Layout ────────────────────────────────────────────────────────────────
-#
-#  ┌──────────────────────┬──────────────────────┐
-#  │   hexstrike_server   │   mcpstrike-server   │  50% | 50%
-#  ├──────────────────────┴──────────────────────┤
-#  │              mcpstrike-client               │
-#  └─────────────────────────────────────────────┘
-#
-# GUI detection:
-#   Linux  → DISPLAY is set
-#   macOS  → not SSH (SSH_CONNECTION / SSH_TTY unset) and not inside tmux already
+# ── Terminal helpers (inspired by TheFatRat open_terminal) ────────────────
+
 _has_display() {
-    [ -n "${DISPLAY:-}" ] ||
-    { [ "$(uname)" = "Darwin" ] && [ -z "${SSH_CONNECTION:-}" ] && [ -z "${SSH_TTY:-}" ] && [ -z "${TMUX:-}" ]; }
+    [[ -n "$WAYLAND_DISPLAY" ]] && return 0
+    if [[ -n "$DISPLAY" ]]; then
+        command -v xdpyinfo &>/dev/null && xdpyinfo &>/dev/null && return 0
+        local _d="${DISPLAY#*:}"; _d="${_d%%.*}"
+        [[ -e "/tmp/.X11-unix/X${_d}" ]] && return 0
+    fi
+    return 1
 }
 
-# Priority: xterm (GUI) → tmux (fallback) → background
-#
-# Tiled layout (designed for 1920×1080):
-#  ┌────────────────────────┬────────────────────────┐
-#  │   hexstrike_server     │   mcpstrike-server     │  top half
-#  ├────────────────────────┴────────────────────────┤
-#  │              mcpstrike-client                   │  bottom half
-#  └─────────────────────────────────────────────────┘
-#
-_FONT_OPTS=(-fa 'Monospace' -fs 13)
+_detect_terminal() {
+    for term in gnome-terminal konsole qterminal xfce4-terminal lxterminal mate-terminal x-terminal-emulator; do
+        command -v "$term" &>/dev/null && { MCP_TERM="$term"; return 0; }
+    done
+    MCP_TERM=""; return 1
+}
 
-if _has_display && command -v xterm &>/dev/null; then
-    xterm -title "hexstrike_server" \
-        "${_FONT_OPTS[@]}" \
-        -geometry 110x35+0+0 \
-        -e "hexstrike_server --port ${HEXSTRIKE_PORT}; read" &
+# open_terminal TITLE CMD [GEOMETRY]
+# Opens CMD in a new terminal window (background).
+# GEOMETRY: X11 geometry string "COLSxROWS+X+Y" (e.g. "110x35+0+0")
+# Priority: macOS Terminal.app → Linux GUI terminal → background with log
+open_terminal() {
+    local title="$1" cmd="$2" geo="${3:-}"
+
+    # macOS: Terminal.app via osascript (always available on macOS)
+    if [[ "$(uname)" == "Darwin" ]]; then
+        local safe="${cmd//\\/\\\\}"
+        safe="${safe//\"/\\\"}"
+        osascript -e "tell application \"Terminal\" to do script \"$safe\"" 2>/dev/null
+        sleep 1; return
+    fi
+
+    # Linux with X11/Wayland display
+    if _has_display; then
+        _detect_terminal
+        local geo_flag=()
+        [[ -n "$geo" ]] && geo_flag=(--geometry="$geo")
+        case "$MCP_TERM" in
+            gnome-terminal)
+                gnome-terminal --title="$title" "${geo_flag[@]}" -- bash -c "$cmd; bash" 2>/dev/null &
+                sleep 2; return ;;
+            xfce4-terminal|lxterminal|mate-terminal)
+                "$MCP_TERM" --title="$title" "${geo_flag[@]}" -e "bash -c '$cmd; bash'" 2>/dev/null &
+                sleep 2; return ;;
+            konsole)
+                # konsole usa --geometry in pixel (WxH+X+Y), non in caratteri
+                konsole --title "$title" -e bash -c "$cmd; bash" 2>/dev/null &
+                sleep 2; return ;;
+            qterminal)
+                qterminal -e bash -c "$cmd; bash" 2>/dev/null &
+                sleep 2; return ;;
+            x-terminal-emulator)
+                x-terminal-emulator -T "$title" "${geo_flag[@]}" -e bash -c "$cmd; bash" 2>/dev/null &
+                sleep 2; return ;;
+        esac
+    fi
+
+    # No GUI terminal available → background with log
+    local log="/tmp/mcpstrike_${title// /_}.log"
+    bash -c "$cmd" >"$log" 2>&1 &
+    echo "  [${title}] PID $! — tail -f $log"
+}
+
+# ── Launch ────────────────────────────────────────────────────────────────
+
+_FORCE_TMUX=false
+[[ "${1:-}" = "--tmux" || "${2:-}" = "--tmux" ]] && _FORCE_TMUX=true
+
+if ! $_FORCE_TMUX; then
+    # Open servers in separate terminal windows; client runs in current terminal
+    # geometry: COLSxROWS+X+Y — side by side on a 1920-wide screen
+    open_terminal "hexstrike_server"  "hexstrike_server --port ${HEXSTRIKE_PORT}"                "110x35+0+0"
     sleep 1
-
-    xterm -title "mcpstrike-server" \
-        "${_FONT_OPTS[@]}" \
-        -geometry 110x35+960+0 \
-        -e "HEXSTRIKE_BACKEND_URL=${HEXSTRIKE_URL} mcpstrike-server; read" &
-    sleep 2
-
-    xterm -title "mcpstrike-client" \
-        "${_FONT_OPTS[@]}" \
-        -geometry 220x40+0+580 \
-        -e "mcpstrike-client --ollama-url ${OLLAMA_URL} --model ${MODEL} --mcp-url ${MCP_URL} --sessions-dir ${SESSIONS_DIR}; read"
-
-elif command -v tmux &>/dev/null; then
-    SESSION="mcpstrike"
-    tmux kill-session -t "$SESSION" 2>/dev/null || true
-    tmux new-session -d -s "$SESSION"
-    tmux set -g mouse on
-
-    # Split top/bottom: top=30% (servers), bottom=70% (client)
-    tmux split-window -v -t "${SESSION}:0.0" -p 70
-
-    # Split top pane horizontally 50/50
-    tmux split-window -h -t "${SESSION}:0.0" -p 50
-
-    # Pane numbering (by position, left→right, top→bottom):
-    #   0.0 = top-left    (hexstrike_server)
-    #   0.1 = top-right   (mcpstrike-server)
-    #   0.2 = bottom 70%  (mcpstrike-client)
-
-    tmux send-keys -t "${SESSION}:0.0" \
-        "hexstrike_server --port ${HEXSTRIKE_PORT}" Enter
-    sleep 1
-
-    tmux send-keys -t "${SESSION}:0.1" \
-        "HEXSTRIKE_BACKEND_URL=${HEXSTRIKE_URL} mcpstrike-server" Enter
-    sleep 2
-
-    tmux send-keys -t "${SESSION}:0.2" \
-        "mcpstrike-client --ollama-url ${OLLAMA_URL} --model ${MODEL} --mcp-url ${MCP_URL} --sessions-dir ${SESSIONS_DIR}" Enter
-
-    tmux select-pane -t "${SESSION}:0.2"
-    tmux attach-session -t "$SESSION"
-
-else
-    # Last resort — first two in background with logs, client in foreground
-    echo "xterm/tmux not found, running in background (logs in /tmp/mcpstrike_*.log)"
-
-    hexstrike_server --port "$HEXSTRIKE_PORT" \
-        > /tmp/mcpstrike_hexstrike.log 2>&1 &
-    echo "hexstrike_server PID $! — tail -f /tmp/mcpstrike_hexstrike.log"
-    sleep 1
-
-    HEXSTRIKE_BACKEND_URL="${HEXSTRIKE_URL}" mcpstrike-server \
-        > /tmp/mcpstrike_server.log 2>&1 &
-    echo "mcpstrike-server PID $! — tail -f /tmp/mcpstrike_server.log"
+    open_terminal "mcpstrike-server"  "HEXSTRIKE_BACKEND_URL=${HEXSTRIKE_URL} mcpstrike-server"  "110x35+960+0"
     sleep 2
 
     mcpstrike-client \
@@ -124,4 +108,24 @@ else
         --model "$MODEL" \
         --mcp-url "$MCP_URL" \
         --sessions-dir "$SESSIONS_DIR"
+else
+    # --tmux: traditional split-pane layout
+    if ! command -v tmux &>/dev/null; then
+        echo "  [!] tmux not found. Run without --tmux to use the default terminal."
+        exit 1
+    fi
+    SESSION="mcpstrike"
+    tmux kill-session -t "$SESSION" 2>/dev/null || true
+    tmux new-session -d -s "$SESSION"
+    tmux set -g mouse on
+    tmux split-window -v -t "${SESSION}:0.0" -p 70
+    tmux split-window -h -t "${SESSION}:0.0" -p 50
+    tmux send-keys -t "${SESSION}:0.0" "hexstrike_server --port ${HEXSTRIKE_PORT}" Enter
+    sleep 1
+    tmux send-keys -t "${SESSION}:0.1" "HEXSTRIKE_BACKEND_URL=${HEXSTRIKE_URL} mcpstrike-server" Enter
+    sleep 2
+    tmux send-keys -t "${SESSION}:0.2" \
+        "mcpstrike-client --ollama-url ${OLLAMA_URL} --model ${MODEL} --mcp-url ${MCP_URL} --sessions-dir ${SESSIONS_DIR}" Enter
+    tmux select-pane -t "${SESSION}:0.2"
+    tmux attach-session -t "$SESSION"
 fi
