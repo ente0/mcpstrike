@@ -46,16 +46,32 @@ _has_display() {
 }
 
 # Priority: xterm (GUI) → tmux (fallback) → background
+#
+# Tiled layout (designed for 1920×1080):
+#  ┌────────────────────────┬────────────────────────┐
+#  │   hexstrike_server     │   mcpstrike-server     │  top half
+#  ├────────────────────────┴────────────────────────┤
+#  │              mcpstrike-client                   │  bottom half
+#  └─────────────────────────────────────────────────┘
+#
+_FONT_OPTS=(-fa 'Monospace' -fs 13)
+
 if _has_display && command -v xterm &>/dev/null; then
     xterm -title "hexstrike_server" \
+        "${_FONT_OPTS[@]}" \
+        -geometry 110x35+0+0 \
         -e "hexstrike_server --port ${HEXSTRIKE_PORT}; read" &
     sleep 1
 
     xterm -title "mcpstrike-server" \
+        "${_FONT_OPTS[@]}" \
+        -geometry 110x35+960+0 \
         -e "HEXSTRIKE_BACKEND_URL=${HEXSTRIKE_URL} mcpstrike-server; read" &
     sleep 2
 
     xterm -title "mcpstrike-client" \
+        "${_FONT_OPTS[@]}" \
+        -geometry 220x40+0+580 \
         -e "mcpstrike-client --ollama-url ${OLLAMA_URL} --model ${MODEL} --mcp-url ${MCP_URL} --sessions-dir ${SESSIONS_DIR}; read"
 
 elif command -v tmux &>/dev/null; then

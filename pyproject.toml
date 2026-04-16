@@ -29,6 +29,7 @@ dev = [
 ]
 
 [project.scripts]
+mcpstrike         = "mcpstrike.launcher:main"
 mcpstrike-server  = "mcpstrike.server.app:main"
 mcpstrike-client  = "mcpstrike.client.tui:main"
 mcpstrike-prompt  = "mcpstrike.client.prompts.generator:main"

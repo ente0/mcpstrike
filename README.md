@@ -62,10 +62,22 @@ pip install -e ".[dev,backend]"
 ### Automated (recommended)
 
 ```bash
-./start.sh
+mcpstrike
 ```
 
-`start.sh` contains your personal IPs/model names. It opens separate xterm windows (or falls back to background processes) for `mcpstrike-server` and `mcpstrike-client`.
+`mcpstrike` is the stack launcher. It opens three tiled xterm windows (or falls back to tmux, then background processes). All options can be overridden via flags:
+
+```bash
+mcpstrike --model qwen3:8b
+mcpstrike --ollama-url http://10.0.0.5:11434
+mcpstrike --sessions-dir /opt/pentest/sessions
+mcpstrike --font-size 15 --screen-width 2560 --screen-height 1440
+mcpstrike --tmux                         # force tmux even if DISPLAY is set
+```
+
+See `mcpstrike --help` for all options.
+
+> **Note:** `start.sh` / `my_start.sh` are still available as personal launcher scripts with hardcoded IPs/model names.
 
 ### Manual
 
@@ -93,6 +105,46 @@ mcpstrike-client
 Requires `pipx install ".[backend]"`.
 
 ## Commands
+
+### mcpstrike (stack launcher)
+
+Starts the full stack in a single command. Automatically picks between xterm, tmux, and background mode.
+
+```
+mcpstrike [OPTIONS]
+
+Network options:
+  --ollama-url URL        Ollama daemon URL (default: http://localhost:11434)
+  --model NAME            Ollama model to use (default: qwen3.5:latest)
+  --hexstrike-port PORT   hexstrike_server port (default: 8888)
+  --mcp-port PORT         mcpstrike-server port (default: 8889)
+
+Session options:
+  --sessions-dir PATH     Directory for session files (default: ~/hexstrike_sessions)
+
+GUI xterm options:
+  --font-size PT          xterm font size in points (default: 13)
+  --screen-width PX       Screen width for window tiling (default: 1920)
+  --screen-height PX      Screen height for window tiling (default: 1080)
+
+Launch mode:
+  --tmux, --no-xterm      Force tmux even if a display is available
+  --xterm                 Force xterm (fails if DISPLAY is not set)
+```
+
+All network options also respect their environment variable equivalents (`OLLAMA_URL`, `OLLAMA_MODEL`, `HEXSTRIKE_PORT`, `MCPSTRIKE_PORT`, `HEXSTRIKE_SESSION_PATH`).
+
+**Window layout (xterm, 1920×1080):**
+
+```
+┌─────────────────────────┬─────────────────────────┐
+│     hexstrike_server    │     mcpstrike-server    │  top ~54%
+├─────────────────────────┴─────────────────────────┤
+│              mcpstrike-client                     │  bottom ~46%
+└───────────────────────────────────────────────────┘
+```
+
+---
 
 ### mcpstrike-client
 
@@ -320,6 +372,7 @@ HEXSTRIKE_SESSION_DIR=my_sessions  # relative to $HOME
 ```
 src/mcpstrike/
   config.py                     # Centralized settings (pydantic-settings)
+  launcher.py                   # `mcpstrike` entry point — stack launcher with argparse
   backend/                      # OPTIONAL — standalone local backend
     app.py                      # FastAPI subprocess execution server
   server/
