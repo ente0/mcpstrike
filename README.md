@@ -1,8 +1,12 @@
-<img width="1928" height="608" alt="Frame 1" src="https://github.com/user-attachments/assets/e4d9cc00-a152-4af6-b731-1e005bb8bc93" />
+<img width="1928" height="608" alt="Frame 2" src="https://github.com/user-attachments/assets/4de72020-70d5-4079-9899-0bec793e9e6c" />
+
+<div align="center">
 
 MCP server + Ollama-driven autonomous penetration testing framework.
 
 mcpstrike connects an LLM (via Ollama) to security tools through the Model Context Protocol (MCP), enabling autonomous or guided penetration testing from a terminal interface.
+
+</div>
 
 ## Architecture
 
