@@ -98,7 +98,7 @@ def format_command_report(command: str, args: list[str], result: dict[str, Any])
     except (TypeError, ValueError):
         duration_str = str(duration)
 
-    bar = "=" * 80
+    bar = "=" * 73
     return (
         f"{bar}\n"
         f"MCPSTRIKE COMMAND EXECUTION REPORT\n"

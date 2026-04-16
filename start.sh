@@ -6,9 +6,24 @@
 HEXSTRIKE_PORT=8888
 MCP_PORT=8889
 OLLAMA_URL="http://localhost:11434"
-MODEL="qwen3.5-uncensored-q8:latest"
+MODEL="qwen3.5:latest"
 MCP_URL="http://localhost:${MCP_PORT}/mcp"
 HEXSTRIKE_URL="http://localhost:${HEXSTRIKE_PORT}"
+
+# Session directory — pass an optional first argument to override the default.
+# Examples:
+#   ./start.sh                          → ~/hexstrike_sessions
+#   ./start.sh /opt/pentest/sessions    → absolute path
+#   ./start.sh custom_dir               → ~/custom_dir
+if [[ -n "${1:-}" ]]; then
+    _sarg="${1/#\~/$HOME}"
+    [[ "$_sarg" != /* ]] && _sarg="$HOME/$_sarg"
+    SESSIONS_DIR="$_sarg"
+    unset _sarg
+    export HEXSTRIKE_SESSION_PATH="$SESSIONS_DIR"
+else
+    SESSIONS_DIR="$HOME/hexstrike_sessions"
+fi
 
 echo "============================================================"
 echo "  mcpstrike stack"
@@ -41,15 +56,16 @@ if _has_display && command -v xterm &>/dev/null; then
     sleep 2
 
     xterm -title "mcpstrike-client" \
-        -e "mcpstrike-client --ollama-url ${OLLAMA_URL} --model ${MODEL} --mcp-url ${MCP_URL} --sessions-dir hexstrike_sessions; read"
+        -e "mcpstrike-client --ollama-url ${OLLAMA_URL} --model ${MODEL} --mcp-url ${MCP_URL} --sessions-dir ${SESSIONS_DIR}; read"
 
 elif command -v tmux &>/dev/null; then
     SESSION="mcpstrike"
     tmux kill-session -t "$SESSION" 2>/dev/null || true
     tmux new-session -d -s "$SESSION"
+    tmux set -g mouse on
 
-    # Split top/bottom: top=60%, bottom=40% (client)
-    tmux split-window -v -t "${SESSION}:0.0" -p 40
+    # Split top/bottom: top=30% (servers), bottom=70% (client)
+    tmux split-window -v -t "${SESSION}:0.0" -p 70
 
     # Split top pane horizontally 50/50
     tmux split-window -h -t "${SESSION}:0.0" -p 50
@@ -57,7 +73,7 @@ elif command -v tmux &>/dev/null; then
     # Pane numbering (by position, left→right, top→bottom):
     #   0.0 = top-left    (hexstrike_server)
     #   0.1 = top-right   (mcpstrike-server)
-    #   0.2 = bottom      (mcpstrike-client)
+    #   0.2 = bottom 70%  (mcpstrike-client)
 
     tmux send-keys -t "${SESSION}:0.0" \
         "hexstrike_server --port ${HEXSTRIKE_PORT}" Enter
@@ -68,7 +84,7 @@ elif command -v tmux &>/dev/null; then
     sleep 2
 
     tmux send-keys -t "${SESSION}:0.2" \
-        "mcpstrike-client --ollama-url ${OLLAMA_URL} --model ${MODEL} --mcp-url ${MCP_URL} --sessions-dir hexstrike_sessions" Enter
+        "mcpstrike-client --ollama-url ${OLLAMA_URL} --model ${MODEL} --mcp-url ${MCP_URL} --sessions-dir ${SESSIONS_DIR}" Enter
 
     tmux select-pane -t "${SESSION}:0.2"
     tmux attach-session -t "$SESSION"
@@ -91,5 +107,5 @@ else
         --ollama-url "$OLLAMA_URL" \
         --model "$MODEL" \
         --mcp-url "$MCP_URL" \
-        --sessions-dir hexstrike_sessions
+        --sessions-dir "$SESSIONS_DIR"
 fi
