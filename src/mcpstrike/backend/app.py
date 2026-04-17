@@ -25,7 +25,6 @@ from __future__ import annotations
 import argparse
 import asyncio
 import os
-import shutil
 import time
 from datetime import datetime
 from typing import Any
