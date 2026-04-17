@@ -4,7 +4,6 @@
  
 <div align="center">
 
-<<<<<<< HEAD
 ![Python](https://img.shields.io/badge/python-%3E%3D3.10-3776AB?logo=python&logoColor=white)
 ![Version](https://img.shields.io/badge/version-3.0.0-blue)
 ![License](https://img.shields.io/badge/license-GPLv3-green)
