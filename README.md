@@ -2,7 +2,7 @@
 
 <div align="center">
 
-MCP server + Ollama-driven autonomous penetration testing framework.
+<br>MCP server + Ollama-driven autonomous penetration testing framework.</br>
 
 mcpstrike connects an LLM (via Ollama) to security tools through the Model Context Protocol (MCP), enabling autonomous or guided penetration testing from a terminal interface.
 
