@@ -1,6 +1,18 @@
 <img width="1928" height="608" alt="Frame 2" src="https://github.com/user-attachments/assets/4de72020-70d5-4079-9899-0bec793e9e6c" />
 
 <div align="center">
+ 
+<div align="center">
+
+<<<<<<< HEAD
+![Python](https://img.shields.io/badge/python-%3E%3D3.10-3776AB?logo=python&logoColor=white)
+![Version](https://img.shields.io/badge/version-3.0.0-blue)
+![License](https://img.shields.io/badge/license-GPLv3-green)
+![MCP](https://img.shields.io/badge/MCP-FastMCP-orange)
+![Ollama](https://img.shields.io/badge/LLM-Ollama-black?logo=ollama)
+![Platform](https://img.shields.io/badge/platform-Linux-lightgrey?logo=linux)
+
+</div>
 
 ### MCP server + Ollama-driven autonomous penetration testing framework.
 
