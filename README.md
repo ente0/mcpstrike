@@ -1,7 +1,7 @@
 <img width="1928" height="608" alt="Frame 2" src="https://github.com/user-attachments/assets/4de72020-70d5-4079-9899-0bec793e9e6c" />
 
 <div align="center">
- 
+
 <div align="center">
 
 ![Python](https://img.shields.io/badge/python-%3E%3D3.10-3776AB?logo=python&logoColor=white)
@@ -212,6 +212,8 @@ go                                    # send any message to start execution
 
 Templates are in `src/mcpstrike/client/prompts/templates/` — you can add your own `.txt` or `.md` files there.
 
+---
+
 ### mcpstrike-server
 
 FastMCP server exposing penetration testing tools via MCP protocol.
@@ -229,6 +231,8 @@ Environment variables:
 | `MCPSTRIKE_PORT` | `8889` | Server bind port |
 | `HEXSTRIKE_SESSION_PATH` | — | Absolute path for sessions (highest priority) |
 | `HEXSTRIKE_SESSION_DIR` | — | Folder name in `$HOME` for sessions |
+
+---
 
 ### mcpstrike-backend (optional)
 
@@ -253,10 +257,11 @@ Endpoints:
 | GET | `/health` | Health check with uptime |
 | POST | `/api/command` | Execute a command, returns stdout/stderr/exit_code |
 
+---
+
 ### mcpstrike-prompt
 
-Standalone prompt generator CLI. Fills template placeholders and writes
-ready-to-use prompt files.
+Standalone prompt generator CLI. Fills template placeholders and writes ready-to-use prompt files.
 
 ```bash
 # Basic usage
@@ -270,6 +275,9 @@ mcpstrike-prompt -t 10.0.0.5 --ua "Mozilla/5.0 (authorized-test)"
 # With out-of-scope file
 mcpstrike-prompt -t 10.0.0.5 --out-of-scope-file scope.txt
 
+# Generate a blank scope file to fill in
+mcpstrike-prompt --scope-template > scope.txt
+
 # Preview without writing
 mcpstrike-prompt -t 10.0.0.5 -d site.com --dry-run
 
@@ -280,43 +288,104 @@ mcpstrike-prompt --list-test-types
 
 #### Out-of-scope file format
 
-scope.txt — lines starting with # are ignored
+Generate a pre-filled template with:
+
+```bash
+mcpstrike-prompt --scope-template > scope.txt
+```
+
+Then edit and pass it:
+
+```bash
+mcpstrike-prompt -t 10.0.0.5 -d site.com --out-of-scope-file scope.txt
+```
+
+File format:
+
+```
+# Lines starting with # are comments — ignored by the parser
+# One entry per line under each section header
+
 [domains]
 admin.example.com
 staging.example.com
+*.internal.example.com
+
 [ips]
 10.0.0.1
 192.168.0.0/24
+
 [paths]
 /api/internal
 /admin
+/health
+/metrics
+
 [vulns]
 dos
 ddos
+account-lockout
+
 [notes]
 Do not test outside 09:00-18:00 UTC
+Maximum 10 requests/second
+Do not use automated scanners on /checkout
+```
 
-Lines before the first `[header]` go to `[notes]`.
+| Rule | Detail |
+|------|--------|
+| Sections | `[domains]` `[ips]` `[paths]` `[vulns]` `[notes]` |
+| Order | Sections can appear in any order |
+| Fallback | Lines before the first header go to `[notes]` |
+| Comments | Any line starting with `#` is ignored |
+| Empty lines | Ignored |
 
-#### User-Agent aliases
+Each section maps to a template placeholder:
+
+| Section | Placeholder |
+|---------|-------------|
+| `[domains]` | `{{OUT_OF_SCOPE_DOMAINS}}` |
+| `[ips]` | `{{OUT_OF_SCOPE_IPS}}` |
+| `[paths]` | `{{OUT_OF_SCOPE_PATHS}}` |
+| `[vulns]` | `{{OUT_OF_SCOPE_VULNS}}` |
+| `[notes]` | `{{OUT_OF_SCOPE_NOTES}}` |
+
+Entries within each section are rendered as a comma-separated inline string. Unused sections render as `N/A`.
+
+#### User-Agent
+
+`--ua` accepts either a predefined alias or any raw UA string:
+
+```bash
+mcpstrike-prompt -t 10.0.0.5 --ua burp
+mcpstrike-prompt -t 10.0.0.5 --ua "Mozilla/5.0 (X11; Linux x86_64) MyTool/1.0"
+```
 
 | Alias | Expands to |
 |-------|------------|
 | `burp` | `BurpSuite-Authorized-Test` |
 | `mobile` | iPhone UA + `(bounty-authorized)` |
-| `googlebot` | Googlebot/2.1 UA |
+| `googlebot` | `Mozilla/5.0 (compatible; Googlebot/2.1; +http://www.google.com/bot.html)` |
 | `curl` | `curl/8.5.0 (authorized-pentest)` |
 | `firefox` | Firefox 124 UA + `(bounty-authorized)` |
 
+The resolved string is injected into `{{USER_AGENT}}` and applied to all HTTP tools in the prompt (curl, nikto, feroxbuster, gobuster, nuclei, sqlmap, dalfox, whatweb, wpscan).
+
 #### Test types
+
+`--test-type` controls which phases and tools the LLM prioritizes:
 
 | Type | LLM behavior |
 |------|-------------|
-| `full` | All phases: recon → enum → exploitation → report |
-| `web_app` | Web-only: skips port scan, focuses dalfox/sqlmap/nuclei |
-| `network` | Network-first: nmap/masscan/SMB/LDAP heavy |
-| `black_box` | No creds. Brute-force + default credential checks |
-| `gray_box` | Creds provided. Post-auth: IDOR, privesc, session abuse |
+| `full` | All phases: recon → enum → exploitation → report. Default. |
+| `web_app` | Web-only: skips port scan, focuses dalfox / sqlmap / nuclei / feroxbuster |
+| `network` | Network-first: heavy nmap / masscan / SMB / LDAP. Web only if port found. |
+| `black_box` | No credentials assumed. Adds brute-force and default credential checks. |
+| `gray_box` | Credentials provided. Focuses post-auth: IDOR, privesc, session abuse. |
+
+Run `mcpstrike-prompt --list-test-types` for the full description of each type.
+
+---
 
 ## MCP Tools Reference
 
@@ -366,6 +435,8 @@ The MCP server exposes 14 tools that the LLM can invoke:
 |---|---|
 | `update_session_findings` | Merge parsed findings into session_metadata.json |
 
+---
+
 ## Agent Mode
 
 When agent mode is ON (default), the client runs an autonomous loop:
@@ -383,6 +454,8 @@ Safety features:
 - **Auto-parse**: Output is parsed for structured findings (ports, vulns, etc.)
 - **Findings persistence**: Parsed findings are merged into `session_metadata.json`
 
+---
+
 ## Prompt Templates
 
 Two templates ship with mcpstrike:
@@ -391,8 +464,10 @@ Two templates ship with mcpstrike:
 
 Full-autonomy prompt with decision framework. The model receives:
 - Target information and scope boundaries
+- Out-of-scope restrictions (domains, IPs, paths, vuln classes, notes)
+- User-Agent to inject in all HTTP tool invocations
 - Complete tool arsenal reference
-- Decision framework (discovery -> enumeration -> exploitation -> documentation)
+- Decision framework (discovery → enumeration → exploitation → documentation)
 - Tool usage best practices and anti-patterns
 - XSS/SQLi workflow examples
 
@@ -409,8 +484,19 @@ Add `.txt` or `.md` files to `src/mcpstrike/client/prompts/templates/`. Use `{{P
 | `{{TARGET}}` | Target IP or hostname |
 | `{{DOMAIN}}` | Domain name |
 | `{{SESSION_ID}}` | Auto-generated session ID |
-| `{{DATE}}` | Current date |
+| `{{DATE}}` | Current date (YYYY-MM-DD) |
+| `{{DATETIME}}` | Full ISO datetime |
+| `{{TIMESTAMP}}` | Unix timestamp |
 | `{{TEST_TYPE}}` | Test type (black_box, gray_box, web_app, network, full) |
+| `{{USER_AGENT}}` | Full User-Agent string for HTTP tools |
+| `{{USER_AGENT_SUFFIX}}` | User-Agent suffix (backward compat) |
+| `{{OUT_OF_SCOPE_DOMAINS}}` | Excluded domains, comma-separated |
+| `{{OUT_OF_SCOPE_IPS}}` | Excluded IPs/ranges, comma-separated |
+| `{{OUT_OF_SCOPE_PATHS}}` | Excluded paths/endpoints, comma-separated |
+| `{{OUT_OF_SCOPE_VULNS}}` | Excluded vulnerability classes, comma-separated |
+| `{{OUT_OF_SCOPE_NOTES}}` | Additional out-of-scope restrictions |
+
+---
 
 ## Configuration
 
@@ -434,6 +520,8 @@ HEXSTRIKE_SESSION_PATH=/absolute/path/to/sessions
 HEXSTRIKE_SESSION_DIR=my_sessions  # relative to $HOME
 ```
 
+---
+
 ## Project Structure
 
 ```
@@ -450,7 +538,7 @@ src/mcpstrike/
     ollama_bridge.py            # Ollama streaming + tool-call dispatch
     tui.py                      # Interactive TUI (rich + prompt_toolkit)
     prompts/
-      generator.py              # Template manager + prompt generation
+      generator.py              # Template manager + prompt generation + CLI
       templates/
         autonomous.txt          # Full-autonomy pentest prompt
         guided.txt              # Step-by-step guided prompt
