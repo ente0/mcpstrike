@@ -255,14 +255,68 @@ Endpoints:
 
 ### mcpstrike-prompt
 
-Standalone prompt generator CLI.
+Standalone prompt generator CLI. Fills template placeholders and writes
+ready-to-use prompt files.
 
-```
-mcpstrike-prompt --target 192.168.1.100 --template autonomous
-mcpstrike-prompt --list                    # list templates
+```bash
+# Basic usage
+mcpstrike-prompt -t 192.168.1.100
+mcpstrike-prompt -t 10.0.0.5 -d site.com --test-type web_app
+
+# With User-Agent (alias or raw string)
+mcpstrike-prompt -t 10.0.0.5 --ua burp
+mcpstrike-prompt -t 10.0.0.5 --ua "Mozilla/5.0 (authorized-test)"
+
+# With out-of-scope file
+mcpstrike-prompt -t 10.0.0.5 --out-of-scope-file scope.txt
+
+# Preview without writing
 mcpstrike-prompt -t 10.0.0.5 -d site.com --dry-run
-mcpstrike-prompt -t 10.0.0.5 -o ./prompts_out/
+
+# List templates / test types
+mcpstrike-prompt --list
+mcpstrike-prompt --list-test-types
 ```
+
+#### Out-of-scope file format
+
+scope.txt — lines starting with # are ignored
+[domains]
+admin.example.com
+staging.example.com
+[ips]
+10.0.0.1
+192.168.0.0/24
+[paths]
+/api/internal
+/admin
+[vulns]
+dos
+ddos
+[notes]
+Do not test outside 09:00-18:00 UTC
+
+Lines before the first `[header]` go to `[notes]`.
+
+#### User-Agent aliases
+
+| Alias | Expands to |
+|-------|------------|
+| `burp` | `BurpSuite-Authorized-Test` |
+| `mobile` | iPhone UA + `(bounty-authorized)` |
+| `googlebot` | Googlebot/2.1 UA |
+| `curl` | `curl/8.5.0 (authorized-pentest)` |
+| `firefox` | Firefox 124 UA + `(bounty-authorized)` |
+
+#### Test types
+
+| Type | LLM behavior |
+|------|-------------|
+| `full` | All phases: recon → enum → exploitation → report |
+| `web_app` | Web-only: skips port scan, focuses dalfox/sqlmap/nuclei |
+| `network` | Network-first: nmap/masscan/SMB/LDAP heavy |
+| `black_box` | No creds. Brute-force + default credential checks |
+| `gray_box` | Creds provided. Post-auth: IDOR, privesc, session abuse |
 
 ## MCP Tools Reference
 

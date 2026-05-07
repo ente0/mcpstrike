@@ -41,15 +41,15 @@ For authorized bug bounty testing, append this to User-Agent in **ALL** HTTP req
 Apply to all tools that support custom headers:
 
 ```bash
-curl:         -A "Mozilla/5.0 {{USER_AGENT_SUFFIX}}"
-nikto:        -useragent "Nikto {{USER_AGENT_SUFFIX}}"
-feroxbuster:  -a "Feroxbuster {{USER_AGENT_SUFFIX}}"
-gobuster:     -a "Gobuster {{USER_AGENT_SUFFIX}}"
-nuclei:       -H "User-Agent: Nuclei {{USER_AGENT_SUFFIX}}"
-sqlmap:       --user-agent="SQLmap {{USER_AGENT_SUFFIX}}"
-dalfox:       -H "User-Agent: Dalfox {{USER_AGENT_SUFFIX}}"
-whatweb:      --user-agent "WhatWeb {{USER_AGENT_SUFFIX}}"
-wpscan:       --ua "WPScan {{USER_AGENT_SUFFIX}}"
+curl:         -A "{{USER_AGENT}}"
+nikto:        -useragent "{{USER_AGENT}}"
+feroxbuster:  -a "{{USER_AGENT}}"
+gobuster:     -a "{{USER_AGENT}}"
+nuclei:       -H "User-Agent: {{USER_AGENT}}"
+sqlmap:       --user-agent="{{USER_AGENT}}"
+dalfox:       -H "User-Agent: {{USER_AGENT}}"
+whatweb:      --user-agent "{{USER_AGENT}}"
+wpscan:       --ua "{{USER_AGENT}}"
 ```
 
 > This identifies your traffic as authorized testing. **ALWAYS include it.**
