@@ -263,7 +263,8 @@ class PromptContext:
     domain: str = "N/A"
     test_type: str = "full"
     user_agent: str = ""          # full UA string — popola {{USER_AGENT}}
-    user_agent_suffix: str = ""   # backward compat — popola {{USER_AGENT_SUFFIX}}    out_of_scope_domains: str = "N/A"
+    user_agent_suffix: str = ""   # backward compat — popola {{USER_AGENT_SUFFIX}}
+    out_of_scope_domains: str = "N/A"
     out_of_scope_ips: str = "N/A"
     out_of_scope_paths: str = "N/A"
     out_of_scope_vulns: str = "N/A"
