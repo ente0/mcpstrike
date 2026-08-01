@@ -43,29 +43,58 @@ mcpstrike-client          mcpstrike-server (MCP)         hexstrike_server
 
 ## Installation
 
-### With pipx (recommended)
+Install mcpstrike in a project-local virtual environment. Its Python
+dependencies and all command-line entry points stay isolated from the system
+Python.
 
 ```bash
-# Standard install (uses hexstrike-server as backend)
-pipx install .
-
-# With optional standalone backend
-pipx install ".[backend]"
+git clone https://github.com/ente0/mcpstrike.git
+cd mcpstrike
+python3 -m venv .venv
+source .venv/bin/activate
+python -m pip install --upgrade pip
+python -m pip install -e .
 ```
 
-### With pip
+Install the optional standalone backend in the same environment:
 
 ```bash
-pip install --user .
-
-# With optional standalone backend
-pip install --user ".[backend]"
+python -m pip install -e ".[backend]"
 ```
 
-### Development
+For development tools and the standalone backend:
 
 ```bash
-pip install -e ".[dev,backend]"
+python -m pip install -e ".[dev,backend]"
+```
+
+After pulling changes, refresh the active environment:
+
+```bash
+git pull
+python -m pip install -e ".[dev,backend]"
+```
+
+### Optional: expose the commands globally
+
+While `.venv` is active, `mcpstrike`, `mcpstrike-server`,
+`mcpstrike-client`, `mcpstrike-prompt` and `mcpstrike-backend` are already on
+your `PATH`. To use them from any directory without activating the environment,
+run this from the repository root once:
+
+```bash
+printf '\nexport PATH="%s/.venv/bin:$PATH"\n' "$PWD" >> ~/.zshrc
+source ~/.zshrc
+```
+
+For Bash, replace `~/.zshrc` with `~/.bashrc` in both commands. The command
+stores the repository's absolute `.venv/bin` path; recreate the environment if
+you move the repository.
+
+Leave the environment when finished:
+
+```bash
+deactivate
 ```
 
 ## Quick Start
@@ -115,7 +144,8 @@ HEXSTRIKE_BACKEND_URL=http://localhost:8890 mcpstrike-server
 mcpstrike-client
 ```
 
-Requires `pipx install ".[backend]"`.
+Requires `python -m pip install -e ".[backend]"` in the active project
+environment.
 
 ## Commands
 
@@ -238,7 +268,7 @@ Environment variables:
 
 Lightweight local backend — alternative to hexstrike-server. Executes security tools as subprocesses directly on the local machine.
 
-**Requires the `backend` extra:** `pipx install ".[backend]"`
+**Requires the `backend` extra:** `python -m pip install -e ".[backend]"`
 
 ```
 mcpstrike-backend [OPTIONS]
