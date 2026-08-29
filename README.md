@@ -131,6 +131,12 @@ HEXSTRIKE_BACKEND_URL=http://localhost:8888 mcpstrike-server
 mcpstrike-client --ollama-url http://<ollama-host>:11434 --model qwen3.5
 ```
 
+The MCP server and client share a bearer token generated automatically at
+`~/.config/mcpstrike/auth-token` with owner-only permissions. The local MCP
+endpoint uses a generated, pinned TLS identity under `~/.config/mcpstrike/`,
+so the client validates the server before sending the bearer token. Plaintext
+HTTP is rejected even on loopback; remote MCP URLs must also use HTTPS.
+
 ### With standalone backend (no hexstrike_server needed)
 
 ```bash
@@ -197,7 +203,7 @@ Interactive TUI for driving penetration tests with an Ollama LLM.
 mcpstrike-client [OPTIONS]
 
 Options:
-  --mcp-url URL          MCP server URL (default: http://localhost:8889/mcp)
+  --mcp-url URL          MCP server URL (default: https://localhost:8889/mcp)
   --ollama-url URL       Ollama API URL (default: http://localhost:11434)
   --model, -m NAME       Ollama model (default: llama3.2)
   --sessions-dir PATH    Session files directory (default: ~/hexstrike_sessions)
@@ -257,8 +263,15 @@ Environment variables:
 | Variable | Default | Description |
 |---|---|---|
 | `HEXSTRIKE_BACKEND_URL` | `http://localhost:8888` | Backend API URL (hexstrike or mcpstrike-backend) |
-| `MCPSTRIKE_HOST` | `0.0.0.0` | Server bind address |
+| `MCPSTRIKE_HOST` | `127.0.0.1` | MCP server bind address (loopback only) |
 | `MCPSTRIKE_PORT` | `8889` | Server bind port |
+| `MCPSTRIKE_AUTH_TOKEN` | generated private token | Shared MCP bearer token (minimum 32 characters) |
+| `MCPSTRIKE_AUTH_TOKEN_PATH` | `~/.config/mcpstrike/auth-token` | Private token file |
+| `MCPSTRIKE_AUTH_SCOPES` | `read,write,execute` scopes | Scopes assigned to the shared token |
+| `MCPSTRIKE_TLS_CERT_PATH` | `~/.config/mcpstrike/mcp-local.crt` | Pinned local MCP TLS certificate |
+| `MCPSTRIKE_TLS_KEY_PATH` | `~/.config/mcpstrike/mcp-local.key` | Owner-only local MCP TLS private key |
+| `MCPSTRIKE_BACKEND_AUTH_TOKEN` | — | Explicit token for a standalone backend on a custom URL |
+| `MCPSTRIKE_BACKEND_AUTH_TOKEN_PATH` | `~/.config/mcpstrike/backend-auth-token` | Dedicated private backend token; never reused for MCP |
 | `HEXSTRIKE_SESSION_PATH` | — | Absolute path for sessions (highest priority) |
 | `HEXSTRIKE_SESSION_DIR` | — | Folder name in `$HOME` for sessions |
 
@@ -274,11 +287,24 @@ Lightweight local backend — alternative to hexstrike-server. Executes security
 mcpstrike-backend [OPTIONS]
 
 Options:
-  --host TEXT    Bind address (default: 0.0.0.0)
-  --port INT     Bind port (default: 8888)
+  --host TEXT    Bind address (loopback only; default: 127.0.0.1)
+  --port INT     Bind port (default: 8890)
 ```
 
-Environment variables: `HEXSTRIKE_BACKEND_HOST`, `HEXSTRIKE_BACKEND_PORT`.
+Environment variables: `MCPSTRIKE_BACKEND_HOST`, `MCPSTRIKE_BACKEND_PORT`,
+`MCPSTRIKE_BACKEND_AUTH_TOKEN`, `MCPSTRIKE_BACKEND_AUTH_TOKEN_PATH`.
+
+The standalone backend proves its identity with a short-lived challenge bound
+to a fresh client nonce. Each request and response then uses a one-time,
+AES-GCM authenticated channel plus an exact request HMAC. The shared backend
+key and plaintext command are never transmitted to a process that races to
+occupy or relay the configured loopback port.
+
+The `timeout` field bounds the direct process, its process group and descendants
+that can still be identified at cleanup time. It is deliberately reported as
+best-effort containment, not an OS sandbox: an already approved executable can
+daemonize and escape PID-based cleanup. Run adversarial binaries inside an
+external sandbox or container rather than relying on this timeout boundary.
 
 Endpoints:
 
@@ -477,6 +503,11 @@ When agent mode is ON (default), the client runs an autonomous loop:
 4. Repeat until the model responds with text only (no tool calls)
 
 Safety features:
+- **Human approval**: Model-requested commands, writes, sensitive reads, external session discovery and model-service queries require an explicit `y`
+- **Authenticated MCP**: Bearer validation and per-tool scopes are enforced by FastMCP
+- **Local-only listeners**: Privileged MCP and subprocess services reject non-loopback binds
+- **Contained sessions**: Session reads and writes cannot escape the configured session root
+- **Untrusted tool results**: Tool output is returned with the `tool` role, never as a user instruction
 - **Max iterations**: Stops after 20 consecutive tool-call cycles
 - **Context pruning**: Sliding window keeps the last 40 messages to prevent Ollama context overflow
 - **Ctrl+C**: Abort the current generation at any time
@@ -537,11 +568,18 @@ All configuration is via environment variables or `.env` file:
 HEXSTRIKE_BACKEND_URL=http://localhost:8888
 
 # MCP Server
-MCPSTRIKE_HOST=0.0.0.0
+MCPSTRIKE_HOST=127.0.0.1
 MCPSTRIKE_PORT=8889
+MCPSTRIKE_AUTH_SCOPES=mcpstrike:read,mcpstrike:write,mcpstrike:execute
+MCPSTRIKE_TLS_CERT_PATH=~/.config/mcpstrike/mcp-local.crt
+MCPSTRIKE_TLS_KEY_PATH=~/.config/mcpstrike/mcp-local.key
+
+# Optional standalone backend
+MCPSTRIKE_BACKEND_HOST=127.0.0.1
+MCPSTRIKE_BACKEND_PORT=8890
 
 # Client
-MCPSTRIKE_MCP_URL=http://localhost:8889/mcp
+MCPSTRIKE_MCP_URL=https://localhost:8889/mcp
 OLLAMA_URL=http://localhost:11434
 OLLAMA_MODEL=llama3.2
 

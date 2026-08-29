@@ -16,14 +16,16 @@ from __future__ import annotations
 
 import argparse
 import os
+import shlex
 import shutil
 import subprocess
 import sys
+import tempfile
 import time
 from pathlib import Path
 
-
 # ── helpers ────────────────────────────────────────────────────────────────
+
 
 def _resolve_sessions_dir(raw: str) -> str:
     p = Path(raw).expanduser()
@@ -45,21 +47,29 @@ def _has_display() -> bool:
             return True
     # fallback: controlla il socket X
     disp_num = display.split(":")[1].split(".")[0] if ":" in display else ""
-    if disp_num and Path(f"/tmp/.X11-unix/X{disp_num}").exists():
-        return True
-    return False
+    return bool(disp_num and Path(f"/tmp/.X11-unix/X{disp_num}").exists())
 
 
 def _detect_terminal() -> str:
     """Trova il primo emulatore di terminale disponibile (Linux)."""
     for term in (
-        "gnome-terminal", "konsole", "qterminal",
-        "xfce4-terminal", "lxterminal", "mate-terminal",
+        "gnome-terminal",
+        "konsole",
+        "qterminal",
+        "xfce4-terminal",
+        "lxterminal",
+        "mate-terminal",
         "x-terminal-emulator",
     ):
         if shutil.which(term):
             return term
     return ""
+
+
+def _shell_command(argv: list[str], env: dict[str, str] | None = None) -> str:
+    """Serialize argv and optional environment as one injection-safe shell line."""
+    command = ["env", *(f"{key}={value}" for key, value in (env or {}).items()), *argv]
+    return shlex.join(command)
 
 
 def open_terminal(title: str, cmd: str, geometry: str | None = None) -> None:
@@ -70,9 +80,9 @@ def open_terminal(title: str, cmd: str, geometry: str | None = None) -> None:
     """
     # macOS: Terminal.app via osascript (sempre disponibile)
     if sys.platform == "darwin":
-        safe = cmd.replace("\\", "\\\\").replace('"', '\\"')
+        script = 'on run argv\ntell application "Terminal" to do script (item 1 of argv)\nend run'
         subprocess.run(
-            ["osascript", "-e", f'tell application "Terminal" to do script "{safe}"'],
+            ["osascript", "-e", script, cmd],
             check=True,
         )
         time.sleep(1)
@@ -82,52 +92,89 @@ def open_terminal(title: str, cmd: str, geometry: str | None = None) -> None:
     if _has_display():
         term = _detect_terminal()
         geo = [f"--geometry={geometry}"] if geometry else []
+        keep_open = f"{cmd}; exec bash"
+        serialized_keep_open = shlex.join(["bash", "-c", keep_open])
 
         if term == "gnome-terminal":
             subprocess.Popen(
-                ["gnome-terminal", f"--title={title}", *geo, "--", "bash", "-c", f"{cmd}; bash"],
+                ["gnome-terminal", f"--title={title}", *geo, "--", "bash", "-c", keep_open],
                 stderr=subprocess.DEVNULL,
             )
-            time.sleep(2); return
+            time.sleep(2)
+            return
         elif term in ("xfce4-terminal", "lxterminal", "mate-terminal"):
             subprocess.Popen(
-                [term, f"--title={title}", *geo, "-e", f"bash -c '{cmd}; bash'"],
+                [term, f"--title={title}", *geo, "-e", serialized_keep_open],
                 stderr=subprocess.DEVNULL,
             )
-            time.sleep(2); return
+            time.sleep(2)
+            return
         elif term == "konsole":
             # konsole non supporta geometry in caratteri, solo posizione
             subprocess.Popen(
-                ["konsole", "--title", title, "-e", "bash", "-c", f"{cmd}; bash"],
+                ["konsole", "--title", title, "-e", "bash", "-c", keep_open],
                 stderr=subprocess.DEVNULL,
             )
-            time.sleep(2); return
+            time.sleep(2)
+            return
         elif term == "qterminal":
             subprocess.Popen(
-                ["qterminal", "-e", f"bash -c '{cmd}; bash'"],
+                ["qterminal", "-e", serialized_keep_open],
                 stderr=subprocess.DEVNULL,
             )
-            time.sleep(2); return
+            time.sleep(2)
+            return
         elif term == "x-terminal-emulator":
             subprocess.Popen(
-                ["x-terminal-emulator", "-T", title, *geo, "-e", "bash", "-c", f"{cmd}; bash"],
+                ["x-terminal-emulator", "-T", title, *geo, "-e", "bash", "-c", keep_open],
                 stderr=subprocess.DEVNULL,
             )
-            time.sleep(2); return
+            time.sleep(2)
+            return
 
     # Nessun terminale GUI → log in background
-    log = f"/tmp/mcpstrike_{title.replace(' ', '_')}.log"
-    with open(log, "w") as fh:
-        p = subprocess.Popen(["bash", "-c", cmd], stdout=fh, stderr=fh)
-    print(f"  [{title}] PID {p.pid} — tail -f {log}")
+    safe_title = "".join(char if char.isalnum() else "_" for char in title)[:40]
+    with tempfile.NamedTemporaryFile(
+        mode="w",
+        encoding="utf-8",
+        prefix=f"mcpstrike_{safe_title}_",
+        suffix=".log",
+        delete=False,
+    ) as log_handle:
+        process = subprocess.Popen(
+            ["bash", "-c", cmd],
+            stdout=log_handle,
+            stderr=log_handle,
+        )
+        log_path = log_handle.name
+    print(f"  [{title}] PID {process.pid} — tail -f {log_path}")
 
 
 # ── tmux layout ────────────────────────────────────────────────────────────
 
+
 def _launch_tmux(args: argparse.Namespace) -> None:
     hexstrike_url = f"http://localhost:{args.hexstrike_port}"
-    mcp_url       = f"http://localhost:{args.mcp_port}/mcp"
-    session       = "mcpstrike"
+    mcp_url = f"https://localhost:{args.mcp_port}/mcp"
+    session = "mcpstrike"
+    hexstrike_command = _shell_command(["hexstrike_server", "--port", str(args.hexstrike_port)])
+    server_command = _shell_command(
+        ["mcpstrike-server"],
+        env={"HEXSTRIKE_BACKEND_URL": hexstrike_url},
+    )
+    client_command = _shell_command(
+        [
+            "mcpstrike-client",
+            "--ollama-url",
+            args.ollama_url,
+            "--model",
+            args.model,
+            "--mcp-url",
+            mcp_url,
+            "--sessions-dir",
+            args.sessions_dir,
+        ]
+    )
 
     subprocess.run(["tmux", "kill-session", "-t", session], stderr=subprocess.DEVNULL)
     subprocess.run(["tmux", "new-session", "-d", "-s", session], check=True)
@@ -135,61 +182,105 @@ def _launch_tmux(args: argparse.Namespace) -> None:
     subprocess.run(["tmux", "split-window", "-v", "-t", f"{session}:0.0", "-p", "70"])
     subprocess.run(["tmux", "split-window", "-h", "-t", f"{session}:0.0", "-p", "50"])
 
-    subprocess.run(["tmux", "send-keys", "-t", f"{session}:0.0",
-                    f"hexstrike_server --port {args.hexstrike_port}", "Enter"])
+    subprocess.run(
+        [
+            "tmux",
+            "send-keys",
+            "-t",
+            f"{session}:0.0",
+            hexstrike_command,
+            "Enter",
+        ]
+    )
     time.sleep(1)
-    subprocess.run(["tmux", "send-keys", "-t", f"{session}:0.1",
-                    f"HEXSTRIKE_BACKEND_URL={hexstrike_url} mcpstrike-server", "Enter"])
+    subprocess.run(
+        [
+            "tmux",
+            "send-keys",
+            "-t",
+            f"{session}:0.1",
+            server_command,
+            "Enter",
+        ]
+    )
     time.sleep(2)
-    subprocess.run(["tmux", "send-keys", "-t", f"{session}:0.2",
-                    (f"mcpstrike-client"
-                     f" --ollama-url {args.ollama_url}"
-                     f" --model {args.model}"
-                     f" --mcp-url {mcp_url}"
-                     f" --sessions-dir {args.sessions_dir}"), "Enter"])
+    subprocess.run(
+        [
+            "tmux",
+            "send-keys",
+            "-t",
+            f"{session}:0.2",
+            client_command,
+            "Enter",
+        ]
+    )
     subprocess.run(["tmux", "select-pane", "-t", f"{session}:0.2"])
     subprocess.run(["tmux", "attach-session", "-t", session])
 
 
 # ── CLI ────────────────────────────────────────────────────────────────────
 
+
 def _build_parser() -> argparse.ArgumentParser:
     p = argparse.ArgumentParser(
         prog="mcpstrike",
-        description="Avvia lo stack mcpstrike (hexstrike_server + mcpstrike-server + mcpstrike-client).",
+        description=(
+            "Avvia lo stack mcpstrike (hexstrike_server + mcpstrike-server + mcpstrike-client)."
+        ),
         formatter_class=argparse.ArgumentDefaultsHelpFormatter,
     )
 
     net = p.add_argument_group("rete")
-    net.add_argument("--ollama-url",
-                     default=os.environ.get("OLLAMA_URL", "http://localhost:11434"),
-                     metavar="URL", help="URL del daemon Ollama")
-    net.add_argument("--model",
-                     default=os.environ.get("OLLAMA_MODEL", "qwen3.5:latest"),
-                     metavar="NAME", help="Modello Ollama da usare")
-    net.add_argument("--hexstrike-port", type=int,
-                     default=int(os.environ.get("HEXSTRIKE_PORT", "8888")),
-                     metavar="PORT", help="Porta di hexstrike_server")
-    net.add_argument("--mcp-port", type=int,
-                     default=int(os.environ.get("MCPSTRIKE_PORT", "8889")),
-                     metavar="PORT", help="Porta di mcpstrike-server")
+    net.add_argument(
+        "--ollama-url",
+        default=os.environ.get("OLLAMA_URL", "http://localhost:11434"),
+        metavar="URL",
+        help="URL del daemon Ollama",
+    )
+    net.add_argument(
+        "--model",
+        default=os.environ.get("OLLAMA_MODEL", "qwen3.5:latest"),
+        metavar="NAME",
+        help="Modello Ollama da usare",
+    )
+    net.add_argument(
+        "--hexstrike-port",
+        type=int,
+        default=int(os.environ.get("HEXSTRIKE_PORT", "8888")),
+        metavar="PORT",
+        help="Porta di hexstrike_server",
+    )
+    net.add_argument(
+        "--mcp-port",
+        type=int,
+        default=int(os.environ.get("MCPSTRIKE_PORT", "8889")),
+        metavar="PORT",
+        help="Porta di mcpstrike-server",
+    )
 
     ses = p.add_argument_group("sessioni")
-    ses.add_argument("--sessions-dir",
-                     default=os.environ.get("HEXSTRIKE_SESSION_PATH",
-                                            str(Path.home() / "hexstrike_sessions")),
-                     metavar="PATH", help="Directory dove salvare le sessioni")
+    ses.add_argument(
+        "--sessions-dir",
+        default=os.environ.get("HEXSTRIKE_SESSION_PATH", str(Path.home() / "hexstrike_sessions")),
+        metavar="PATH",
+        help="Directory dove salvare le sessioni",
+    )
 
     mode = p.add_argument_group("modalità avvio")
-    mode.add_argument("--tmux", dest="force_tmux", action="store_true", default=False,
-                      help="Forza tmux split-pane invece del terminale di default")
+    mode.add_argument(
+        "--tmux",
+        dest="force_tmux",
+        action="store_true",
+        default=False,
+        help="Forza tmux split-pane invece del terminale di default",
+    )
 
     return p
 
 
 def main() -> None:
     parser = _build_parser()
-    args   = parser.parse_args()
+    args = parser.parse_args()
     args.sessions_dir = _resolve_sessions_dir(args.sessions_dir)
 
     print("=" * 73)
@@ -197,7 +288,7 @@ def main() -> None:
     print("=" * 73)
 
     hexstrike_url = f"http://localhost:{args.hexstrike_port}"
-    mcp_url       = f"http://localhost:{args.mcp_port}/mcp"
+    mcp_url = f"https://localhost:{args.mcp_port}/mcp"
 
     if args.force_tmux:
         if not shutil.which("tmux"):
@@ -208,22 +299,35 @@ def main() -> None:
 
     # Default: apri i server in finestre separate, client in foreground
     # geometry: COLSxROWS+X+Y — affiancate su uno schermo da 1920 di larghezza
-    open_terminal("hexstrike_server",
-                  f"hexstrike_server --port {args.hexstrike_port}",
-                  geometry="110x35+0+0")
+    open_terminal(
+        "hexstrike_server",
+        _shell_command(["hexstrike_server", "--port", str(args.hexstrike_port)]),
+        geometry="110x35+0+0",
+    )
     time.sleep(1)
-    open_terminal("mcpstrike-server",
-                  f"HEXSTRIKE_BACKEND_URL={hexstrike_url} mcpstrike-server",
-                  geometry="110x35+960+0")
+    open_terminal(
+        "mcpstrike-server",
+        _shell_command(
+            ["mcpstrike-server"],
+            env={"HEXSTRIKE_BACKEND_URL": hexstrike_url},
+        ),
+        geometry="110x35+960+0",
+    )
     time.sleep(2)
 
-    subprocess.run([
-        "mcpstrike-client",
-        "--ollama-url", args.ollama_url,
-        "--model",      args.model,
-        "--mcp-url",    mcp_url,
-        "--sessions-dir", args.sessions_dir,
-    ])
+    subprocess.run(
+        [
+            "mcpstrike-client",
+            "--ollama-url",
+            args.ollama_url,
+            "--model",
+            args.model,
+            "--mcp-url",
+            mcp_url,
+            "--sessions-dir",
+            args.sessions_dir,
+        ]
+    )
 
 
 if __name__ == "__main__":

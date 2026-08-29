@@ -15,9 +15,11 @@ from __future__ import annotations
 import json
 from dataclasses import dataclass, field
 from typing import Any
+from urllib.parse import urlparse
 
 import httpx
 
+from ..common.security import is_loopback_host, require_secure_bearer_url
 from ..config import settings
 
 
@@ -34,7 +36,7 @@ class MCPTool:
     input_schema: dict[str, Any] = field(default_factory=dict)
 
     @classmethod
-    def from_raw(cls, raw: dict[str, Any]) -> "MCPTool":
+    def from_raw(cls, raw: dict[str, Any]) -> MCPTool:
         return cls(
             name=raw.get("name", "unknown"),
             description=raw.get("description", ""),
@@ -62,11 +64,15 @@ class MCPClientWrapper:
         client_name: str = "mcpstrike-client",
         client_version: str = "3.0.0",
         timeout: float = 60.0,
+        auth_token: str | None = None,
     ) -> None:
         self.mcp_url = mcp_url or settings.mcp_url
         self.client_name = client_name
         self.client_version = client_version
         self.timeout = timeout
+        self.auth_token = auth_token or settings.resolve_auth_token(create=True)
+        if self.auth_token:
+            require_secure_bearer_url(self.mcp_url, "mcpstrike MCP client")
 
         self._session_id: str | None = None
         self._request_id = 1
@@ -76,8 +82,21 @@ class MCPClientWrapper:
 
     # ── Context manager ────────────────────────────────────────────────
 
-    async def __aenter__(self) -> "MCPClientWrapper":
-        self._http = httpx.AsyncClient(timeout=self.timeout)
+    def _new_http_client(self) -> httpx.AsyncClient:
+        parsed = urlparse(self.mcp_url)
+        verify: bool | str = True
+        if parsed.hostname and is_loopback_host(parsed.hostname):
+            tls_identity = settings.resolve_mcp_tls_identity(create=False)
+            if tls_identity is None:
+                raise MCPProtocolError(
+                    "Local MCP TLS certificate is unavailable; start mcpstrike-server first"
+                )
+            cert_path, _key_path = tls_identity
+            verify = str(cert_path)
+        return httpx.AsyncClient(timeout=self.timeout, verify=verify)
+
+    async def __aenter__(self) -> MCPClientWrapper:
+        self._http = self._new_http_client()
         return self
 
     async def __aexit__(self, exc_type, exc, tb) -> None:
@@ -110,7 +129,7 @@ class MCPClientWrapper:
     async def _send(self, method: str, params: dict[str, Any] | None = None) -> dict[str, Any]:
         if self._http is None:
             # Lazy-open outside of `async with` for convenience.
-            self._http = httpx.AsyncClient(timeout=self.timeout)
+            self._http = self._new_http_client()
 
         payload = {
             "jsonrpc": "2.0",
@@ -124,6 +143,8 @@ class MCPClientWrapper:
             "Content-Type": "application/json",
             "Accept": "application/json, text/event-stream",
         }
+        if self.auth_token:
+            headers["Authorization"] = f"Bearer {self.auth_token}"
         if self._session_id and method != "initialize":
             headers["mcp-session-id"] = self._session_id
 
