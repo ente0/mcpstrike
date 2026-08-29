@@ -7,18 +7,22 @@ of command output, and Ctrl+C abort.
 
 Entry point::
 
-    mcpstrike-client --model llama3.2 --mcp-url http://localhost:8889/mcp
+    mcpstrike-client --model llama3.2 --mcp-url https://localhost:8889/mcp
 """
 
 from __future__ import annotations
 
 import argparse
 import asyncio
+import contextlib
+import hashlib
+import inspect
 import json
 import os
 import signal
 import sys
 import time
+from collections.abc import Awaitable, Callable
 from dataclasses import dataclass, field
 from typing import Any
 
@@ -33,12 +37,14 @@ from rich.console import Console
 from rich.panel import Panel
 from rich.spinner import Spinner
 from rich.table import Table
+from rich.text import Text
 from rich.theme import Theme
 
 from ..common.filenames import FilenameAllocator
 from ..common.formatters import format_command_report
 from ..config import settings
-from .ollama_bridge import ChatChunk, OllamaBridge, ToolCall
+from .ollama_bridge import OllamaBridge, ToolCall
+from .policy import requires_human_approval, untrusted_tool_result
 from .prompts.generator import PromptContext, TemplateManager, generate_prompt
 from .wrapper import MCPClientWrapper, MCPProtocolError
 
@@ -169,6 +175,7 @@ class TUIApp:
         use_native_tools: bool = True,
         auto_parse: bool = True,
         debug: bool = False,
+        approval_callback: Callable[[ToolCall], bool | Awaitable[bool]] | None = None,
     ) -> None:
         self.mcp_url = mcp_url or settings.mcp_url
         self.ollama_url = ollama_url or settings.ollama_url
@@ -179,6 +186,7 @@ class TUIApp:
         self.use_native_tools = use_native_tools
         self.auto_parse = auto_parse
         self.debug = debug
+        self.approval_callback = approval_callback
 
         self.mcp = MCPClientWrapper(mcp_url=self.mcp_url)
         self.bridge = OllamaBridge(
@@ -200,6 +208,7 @@ class TUIApp:
         self.history = InMemoryHistory()
         self.prompt_style = PTStyle.from_dict({"prompt": "#00ff00 bold"})
         self.template_mgr = TemplateManager()
+        self.prompt_session: PromptSession | None = None
 
     # ── Logging helpers ────────────────────────────────────────────────
 
@@ -342,6 +351,7 @@ class TUIApp:
                 style=self.prompt_style,
                 complete_while_typing=True,
             )
+            self.prompt_session = session
 
             while self.running:
                 try:
@@ -602,7 +612,11 @@ class TUIApp:
             pending_tool_calls: list[ToolCall] = []
 
             try:
-                spinner = Spinner("dots", text="[dim]Thinking... (Ctrl+C to abort)[/]", style="cyan")
+                spinner = Spinner(
+                    "dots",
+                    text="[dim]Thinking... (Ctrl+C to abort)[/]",
+                    style="cyan",
+                )
                 first_content = True
 
                 from rich.live import Live
@@ -669,16 +683,11 @@ class TUIApp:
                 )
                 return
 
-            # Continue autonomously.
+            # Continue autonomously. The conversation now ends with a proper
+            # ``tool`` role, so no synthetic user instruction is needed.
             console.print(
                 f"\n[dim]{ICONS['loop']} Continuing autonomously "
                 f"(iteration {iteration}/{self.MAX_AGENT_ITERATIONS})...[/]\n"
-            )
-            self.conversation.append(
-                {
-                    "role": "user",
-                    "content": "Tool executed. Proceed with the next step.",
-                }
             )
 
     def _prune_context(self) -> None:
@@ -699,6 +708,41 @@ class TUIApp:
             args_json = json.dumps(tc.arguments, indent=2)
             console.print(f"[dim]{args_json}[/]")
 
+        if requires_human_approval(tc.name) and not await self._approve_tool_call(tc):
+            self.warn(f"Denied model-requested action: {tc.name}", indent=1)
+            self.conversation.append(
+                {
+                    "role": "assistant",
+                    "content": "",
+                    "tool_calls": [
+                        {
+                            "type": "function",
+                            "function": {"name": tc.name, "arguments": tc.arguments},
+                        }
+                    ],
+                }
+            )
+            self.conversation.append(
+                untrusted_tool_result(
+                    tc.name,
+                    json.dumps({"status": "denied", "reason": "human approval required"}),
+                )
+            )
+            return
+
+        self.conversation.append(
+            {
+                "role": "assistant",
+                "content": "",
+                "tool_calls": [
+                    {
+                        "type": "function",
+                        "function": {"name": tc.name, "arguments": tc.arguments},
+                    }
+                ],
+            }
+        )
+
         # Track session id.
         if tc.name == "create_session":
             sid = tc.arguments.get("session_id")
@@ -714,10 +758,10 @@ class TUIApp:
         except MCPProtocolError as e:
             self.err(f"MCP error: {e}", indent=1)
             self.conversation.append(
-                {
-                    "role": "user",
-                    "content": f"[TOOL ERROR for {tc.name}]: {e}",
-                }
+                untrusted_tool_result(
+                    tc.name,
+                    json.dumps({"status": "error", "error": str(e)}),
+                )
             )
             return
         except Exception as e:
@@ -739,17 +783,64 @@ class TUIApp:
         result_json = json.dumps(result, indent=2)
         if len(result_json) > 2000:
             result_json = result_json[:2000] + "\n... (truncated)"
-        self.conversation.append(
-            {
-                "role": "assistant",
-                "content": f'{{"tool": "{tc.name}", "arguments": {json.dumps(tc.arguments)}}}',
-            }
+        self.conversation.append(untrusted_tool_result(tc.name, result_json))
+
+    async def _approve_tool_call(self, tc: ToolCall) -> bool:
+        """Fail closed unless a human approves the exact tool and arguments."""
+        if self.approval_callback is not None:
+            decision = self.approval_callback(tc)
+            if inspect.isawaitable(decision):
+                decision = await decision
+            return bool(decision)
+
+        if self.prompt_session is None:
+            return False
+
+        self.warn(f"Approval required for high-impact tool: {tc.name}", indent=1)
+        console.print(
+            Panel.fit(
+                Text(self._approval_details(tc)),
+                title="Exact action awaiting approval",
+                border_style="yellow",
+            )
         )
-        self.conversation.append(
-            {
-                "role": "user",
-                "content": f"[TOOL RESULT for {tc.name}]:\n{result_json}\n[END]",
-            }
+        prompt = HTML("<b><ansiyellow>Approve this exact action? [y/N] &gt;</ansiyellow></b> ")
+        answer = await asyncio.get_event_loop().run_in_executor(
+            None,
+            lambda: self.prompt_session.prompt(prompt),
+        )
+        return answer.strip().lower() in {"y", "yes"}
+
+    def _approval_details(self, tc: ToolCall) -> str:
+        """Render bounded, terminal-safe details for a high-impact action."""
+        if tc.name != "write_session_file":
+            arguments = json.dumps(tc.arguments, indent=2, ensure_ascii=True)
+            return f"Tool: {tc.name}\nArguments:\n{arguments}"
+
+        filename = str(tc.arguments.get("filename", "<missing>"))
+        session_path = tc.arguments.get("session_path")
+        session_id = tc.arguments.get("session_id") or self.current_session_id
+        if session_path:
+            target_root = os.path.expanduser(str(session_path))
+        elif session_id:
+            target_root = os.path.join(self.sessions_dir, str(session_id))
+        else:
+            target_root = self.sessions_dir
+        target = os.path.join(target_root, filename)
+        content = str(tc.arguments.get("content", ""))
+        content_bytes = content.encode("utf-8")
+        preview = content[:240]
+        if len(content) > len(preview):
+            preview += "…"
+        return "\n".join(
+            (
+                "Tool: write_session_file",
+                f"Target: {target}",
+                f"Mode: {'append' if bool(tc.arguments.get('append')) else 'overwrite'}",
+                f"UTF-8 size: {len(content_bytes)} bytes",
+                f"SHA-256: {hashlib.sha256(content_bytes).hexdigest()}",
+                f"Content preview: {json.dumps(preview, ensure_ascii=True)}",
+            )
         )
 
     async def _auto_save(self, arguments: dict[str, Any], result: dict[str, Any]) -> None:
@@ -811,7 +902,7 @@ class TUIApp:
             self.info(f"Parsed with '{parser_name}': {count} findings", indent=1)
             # Persist findings into session_metadata.json
             if self.mcp.has_tool("update_session_findings") and findings:
-                try:
+                with contextlib.suppress(MCPProtocolError):
                     await self.mcp.call_tool(
                         "update_session_findings",
                         {
@@ -821,8 +912,6 @@ class TUIApp:
                             "command": command,
                         },
                     )
-                except MCPProtocolError:
-                    pass  # non-critical, don't break the flow
 
     @staticmethod
     def _extract_mcp_payload(raw: dict[str, Any] | None) -> dict[str, Any] | None:
@@ -901,13 +990,13 @@ Examples:
   mcpstrike-client
   mcpstrike-client --model qwen2.5:7b
   mcpstrike-client --no-native-tools
-  mcpstrike-client --mcp-url http://remote:8889/mcp
+  mcpstrike-client --mcp-url https://localhost:8889/mcp
   mcpstrike-client --ollama-url http://gpu-box:11434
         """,
     )
     parser.add_argument(
         "--mcp-url", default=None, metavar="URL",
-        help="MCP server URL (default: http://localhost:8889/mcp)",
+        help="MCP server URL (default: https://localhost:8889/mcp)",
     )
     parser.add_argument(
         "--ollama-url", default=None, metavar="URL",

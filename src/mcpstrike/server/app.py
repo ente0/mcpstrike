@@ -16,20 +16,144 @@ Tool groups:
 from __future__ import annotations
 
 import json
+import secrets
+import shlex
 import shutil
+import time
 import traceback
 from datetime import datetime
 from pathlib import Path
 from typing import Any
+from urllib.parse import urlparse
 
 import aiofiles
 import httpx
 
 from ..common import parsers
+from ..common.security import (
+    BACKEND_AUTH_WINDOW_SECONDS,
+    backend_signature_headers,
+    decrypt_backend_message,
+    encrypt_backend_message,
+    verify_backend_challenge,
+)
 from ..config import settings
 from .wrapper import MCPServerWrapper
 
 wrapper = MCPServerWrapper(name="HexStrike Security Tools", version="3.0.0")
+
+
+async def _backend_request(
+    client: httpx.AsyncClient,
+    method: str,
+    path: str,
+    payload: dict[str, Any] | None = None,
+) -> httpx.Response:
+    """Verify backend identity, then send one nonce-bound signed request."""
+    base_url = wrapper.backend_url.rstrip("/")
+    request_url = f"{base_url}{path}"
+    token = settings.auth_token_for_backend_url(wrapper.backend_url)
+    if token is None:
+        if settings.backend_auth_required_for_url(wrapper.backend_url):
+            raise RuntimeError(
+                "Standalone backend key is unavailable; start mcpstrike-backend first"
+            )
+        return await client.request(method, request_url, json=payload)
+
+    client_nonce = secrets.token_urlsafe(24)
+    challenge_response = await client.get(
+        f"{base_url}/auth/challenge",
+        params={"client_nonce": client_nonce},
+    )
+    challenge_response.raise_for_status()
+    challenge = challenge_response.json()
+    echoed_client_nonce = challenge.get("client_nonce")
+    server_nonce = challenge.get("nonce")
+    challenge_timestamp = challenge.get("timestamp")
+    proof = challenge.get("proof")
+    if (
+        echoed_client_nonce != client_nonce
+        or not isinstance(server_nonce, str)
+        or not isinstance(challenge_timestamp, int)
+    ):
+        raise RuntimeError("Backend returned a malformed authentication challenge")
+    if not isinstance(proof, str) or not verify_backend_challenge(
+        token,
+        client_nonce,
+        server_nonce,
+        challenge_timestamp,
+        proof,
+    ):
+        raise RuntimeError("Backend identity verification failed")
+
+    plaintext_body = (
+        json.dumps(payload, separators=(",", ":"), ensure_ascii=False).encode("utf-8")
+        if payload is not None
+        else b""
+    )
+    request_path = urlparse(request_url).path or "/"
+    request_timestamp = int(time.time())
+    encryption_nonce, encrypted_body = encrypt_backend_message(
+        token,
+        plaintext_body,
+        direction="request",
+        method=method,
+        path=request_path,
+        timestamp=request_timestamp,
+        client_nonce=client_nonce,
+        server_nonce=server_nonce,
+    )
+    headers = backend_signature_headers(
+        token,
+        method,
+        request_path,
+        encrypted_body,
+        server_nonce=server_nonce,
+        client_nonce=client_nonce,
+        timestamp=request_timestamp,
+    )
+    headers["Content-Type"] = "application/octet-stream"
+    headers["X-MCPStrike-Encryption-Nonce"] = encryption_nonce
+    response = await client.request(
+        method,
+        request_url,
+        content=encrypted_body,
+        headers=headers,
+    )
+    if not response.is_success:
+        return response
+
+    response_timestamp_header = response.headers.get("X-MCPStrike-Response-Timestamp")
+    response_encryption_nonce = response.headers.get("X-MCPStrike-Encryption-Nonce")
+    if not response_timestamp_header or not response_encryption_nonce:
+        raise RuntimeError("Backend returned an unauthenticated response")
+    try:
+        response_timestamp = int(response_timestamp_header)
+    except ValueError as exc:
+        raise RuntimeError("Backend returned an invalid response timestamp") from exc
+    if abs(int(time.time()) - response_timestamp) > BACKEND_AUTH_WINDOW_SECONDS:
+        raise RuntimeError("Backend returned an expired response")
+    try:
+        plaintext_response = decrypt_backend_message(
+            token,
+            response.content,
+            response_encryption_nonce,
+            direction="response",
+            method=method,
+            path=request_path,
+            timestamp=response_timestamp,
+            client_nonce=client_nonce,
+            server_nonce=server_nonce,
+            status_code=response.status_code,
+        )
+    except ValueError as exc:
+        raise RuntimeError("Backend response authentication failed") from exc
+    return httpx.Response(
+        response.status_code,
+        content=plaintext_response,
+        headers={"Content-Type": "application/json"},
+        request=response.request,
+    )
 
 
 # ════════════════════════════════════════════════════════════════════════════
@@ -57,7 +181,7 @@ async def get_config() -> dict[str, Any]:
     }
 
 
-@wrapper.tool()
+@wrapper.tool(required_scopes=("mcpstrike:write",))
 async def set_session_directory(
     path: str | None = None,
     directory_name: str | None = None,
@@ -154,7 +278,7 @@ async def discover_sessions(
         return {"status": "error", "error": str(e)}
 
 
-@wrapper.tool()
+@wrapper.tool(required_scopes=("mcpstrike:write",))
 async def import_external_session(
     source_path: str,
     session_id: str | None = None,
@@ -169,7 +293,7 @@ async def import_external_session(
             return {"status": "error", "error": f"Source path is not a directory: {source}"}
 
         session_id = session_id or source.name
-        target = wrapper.session_dir / session_id
+        target = _resolve_target_dir(session_id, None)
         if target.exists():
             return {
                 "status": "error",
@@ -208,7 +332,8 @@ async def health_check() -> dict[str, Any]:
     """Ping the HexStrike backend."""
     async with httpx.AsyncClient(timeout=10.0) as client:
         try:
-            response = await client.get(f"{wrapper.backend_url}/health")
+            response = await _backend_request(client, "GET", "/health")
+            response.raise_for_status()
             return response.json()
         except Exception as e:
             return {"status": "failed", "error": str(e)}
@@ -222,7 +347,14 @@ async def list_models(ollama_url: str | None = None) -> dict[str, Any]:
     sizes and modification dates. Useful to check which models are
     available before switching with ``/model``.
     """
-    url = ollama_url or settings.ollama_url
+    configured_url = settings.ollama_url.rstrip("/")
+    url = (ollama_url or configured_url).rstrip("/")
+    if url != configured_url:
+        return {
+            "status": "failed",
+            "ollama_url": url,
+            "error": "ollama_url must match the administrator-configured OLLAMA_URL",
+        }
     async with httpx.AsyncClient(timeout=10.0) as client:
         try:
             response = await client.get(f"{url}/api/tags")
@@ -246,7 +378,7 @@ async def list_models(ollama_url: str | None = None) -> dict[str, Any]:
             return {"status": "failed", "ollama_url": url, "error": str(e)}
 
 
-@wrapper.tool()
+@wrapper.tool(required_scopes=("mcpstrike:execute",))
 async def execute_command(
     command: str,
     args: list[str] | None = None,
@@ -254,11 +386,25 @@ async def execute_command(
 ) -> dict[str, Any]:
     """Run a security command on the HexStrike backend."""
     start = datetime.now()
-    full_command = f"{command} {' '.join(args)}" if args else command
-    payload = {"command": full_command, "timeout": timeout}
+    argv = [command, *(args or [])]
+    full_command = shlex.join(argv)
+    # ``command`` keeps the legacy HexStrike contract, while the standalone
+    # backend consumes ``executable`` + ``args`` without invoking a shell.
+    payload = {
+        "command": full_command,
+        "executable": command,
+        "args": args or [],
+        "timeout": timeout,
+    }
     async with httpx.AsyncClient(timeout=timeout) as client:
         try:
-            response = await client.post(f"{wrapper.backend_url}/api/command", json=payload)
+            response = await _backend_request(
+                client,
+                "POST",
+                "/api/command",
+                payload,
+            )
+            response.raise_for_status()
             result = response.json()
             end = datetime.now()
             return {
@@ -288,26 +434,47 @@ def _resolve_target_dir(
     session_path: str | None,
     mkdir: bool = False,
 ) -> Path:
+    root = wrapper.session_dir.expanduser().resolve(strict=False)
     if session_path:
-        target = Path(session_path).expanduser()
+        requested = Path(session_path).expanduser()
+        target = requested if requested.is_absolute() else root / requested
     elif session_id:
-        target = wrapper.session_dir / session_id
+        target = root / session_id
     else:
-        target = wrapper.session_dir
+        target = root
+    target = target.resolve(strict=False)
+    try:
+        target.relative_to(root)
+    except ValueError as exc:
+        raise ValueError(f"Session path escapes configured root: {target}") from exc
     if mkdir:
         target.mkdir(parents=True, exist_ok=True)
+        target = target.resolve(strict=True)
+        try:
+            target.relative_to(root)
+        except ValueError as exc:
+            raise ValueError(f"Session path escapes configured root: {target}") from exc
     return target
 
 
-@wrapper.tool()
+def _resolve_session_file(target_dir: Path, filename: str) -> Path:
+    root = target_dir.resolve(strict=True)
+    candidate = (root / filename).resolve(strict=False)
+    try:
+        candidate.relative_to(root)
+    except ValueError as exc:
+        raise ValueError(f"Session filename escapes target directory: {filename}") from exc
+    return candidate
+
+
+@wrapper.tool(required_scopes=("mcpstrike:write",))
 async def create_session(
     session_id: str,
     metadata: dict[str, Any] | str | None = None,
 ) -> dict[str, Any]:
     """Create a new pentest session in the configured SESSION_DIR."""
     try:
-        session_dir = wrapper.session_dir / session_id
-        session_dir.mkdir(parents=True, exist_ok=True)
+        session_dir = _resolve_target_dir(session_id, None, mkdir=True)
 
         if metadata:
             if isinstance(metadata, str):
@@ -367,7 +534,7 @@ async def list_sessions() -> dict[str, Any]:
         return {"status": "error", "error": str(e)}
 
 
-@wrapper.tool()
+@wrapper.tool(required_scopes=("mcpstrike:write",))
 async def write_session_file(
     filename: str,
     content: str,
@@ -378,7 +545,7 @@ async def write_session_file(
     """Write content to a session file."""
     try:
         target_dir = _resolve_target_dir(session_id, session_path, mkdir=True)
-        file_path = target_dir / filename
+        file_path = _resolve_session_file(target_dir, filename)
         mode = "a" if append else "w"
         async with aiofiles.open(file_path, mode=mode, encoding="utf-8") as f:
             await f.write(content)
@@ -403,7 +570,7 @@ async def read_session_file(
     """Read content from a session file."""
     try:
         target_dir = _resolve_target_dir(session_id, session_path)
-        file_path = target_dir / filename
+        file_path = _resolve_session_file(target_dir, filename)
         if not file_path.exists():
             return {"status": "error", "error": "File not found"}
         async with aiofiles.open(file_path, encoding="utf-8") as f:
@@ -430,13 +597,19 @@ async def list_session_files(
         target_dir = _resolve_target_dir(session_id, session_path)
         if not target_dir.exists():
             return {"status": "error", "error": "Directory not found"}
-        files = (
+        candidates = (
             list(target_dir.glob(pattern))
             if pattern
             else [f for f in target_dir.iterdir() if f.is_file()]
         )
         file_list = []
-        for fp in sorted(files):
+        for fp in sorted(candidates):
+            try:
+                fp = _resolve_session_file(target_dir, str(fp.relative_to(target_dir)))
+            except (OSError, ValueError):
+                continue
+            if not fp.is_file():
+                continue
             stat = fp.stat()
             file_list.append(
                 {"filename": fp.name, "size_bytes": stat.st_size, "modified": stat.st_mtime}
@@ -472,7 +645,11 @@ async def parse_output(parser: str, content: str) -> dict[str, Any]:
     }
     fn = dispatch.get(parser.lower())
     if fn is None:
-        return {"status": "error", "error": f"Unknown parser: {parser}", "available": list(dispatch)}
+        return {
+            "status": "error",
+            "error": f"Unknown parser: {parser}",
+            "available": list(dispatch),
+        }
     try:
         return {"status": "success", "parser": parser.lower(), "findings": fn(content)}
     except Exception as e:
@@ -500,7 +677,7 @@ async def auto_parse_output(command: str, content: str) -> dict[str, Any]:
 # ════════════════════════════════════════════════════════════════════════════
 
 
-@wrapper.tool()
+@wrapper.tool(required_scopes=("mcpstrike:write",))
 async def update_session_findings(
     session_id: str,
     parser: str,
